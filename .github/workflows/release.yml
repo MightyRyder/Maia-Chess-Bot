@@ -3,7 +3,7 @@ name: Build and release
 on:
   push:
     tags:
-      - 'v*'          # triggers on tags like v1.0.0
+      - 'v*'
 
 jobs:
   build:
@@ -11,27 +11,17 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            target: windows
-            arch: amd64
-            cc: gcc
-            output: main_windows_x64.exe
-            raylib_install: |
-              v setup raylib
+            artifact-name: main_windows_x64.exe
+            v_os: windows
+            cc: msvc
           - os: ubuntu-latest
-            target: linux
-            arch: amd64
+            artifact-name: main_linux_x64
+            v_os: linux
             cc: gcc
-            output: main_linux_x64
-            raylib_install: |
-              sudo apt-get update
-              sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev libxinerama-dev libwayland-dev libxkbcommon-dev
           - os: macos-latest
-            target: macos
-            arch: arm64
+            artifact-name: main_macos_arm64
+            v_os: macos
             cc: clang
-            output: main_macos_arm64
-            raylib_install: |
-              brew install raylib
 
     runs-on: ${{ matrix.os }}
 
@@ -39,22 +29,51 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup V
-        uses: vlang/setup-v@v1
-
-      - name: Install Raylib (if needed)
-        run: ${{ matrix.raylib_install }}
+      - name: Download and install V (prebuilt)
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            V_URL="https://github.com/vlang/v/releases/latest/download/v_windows.zip"
+            curl -L -o v.zip "$V_URL"
+            unzip -q v.zip -d v_install
+            echo "$PWD/v_install/v" >> $GITHUB_PATH
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            V_URL="https://github.com/vlang/v/releases/latest/download/v_linux.zip"
+            curl -L -o v.zip "$V_URL"
+            sudo unzip -q v.zip -d /usr/local/v
+            echo "/usr/local/v/v" >> $GITHUB_PATH
+          else
+            V_URL="https://github.com/vlang/v/releases/latest/download/v_macos.zip"
+            curl -L -o v.zip "$V_URL"
+            sudo unzip -q v.zip -d /usr/local/v
+            echo "/usr/local/v/v" >> $GITHUB_PATH
+          fi
         shell: bash
+
+      - name: Install Raylib (Windows)
+        if: runner.os == 'Windows'
+        run: v setup raylib
+
+      - name: Install Raylib (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxi-dev \
+            libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev libxinerama-dev \
+            libwayland-dev libxkbcommon-dev
+
+      - name: Install Raylib (macOS)
+        if: runner.os == 'macOS'
+        run: brew install raylib
 
       - name: Build
         run: |
           v -skip-unused -cflags "-O3 -DNDEBUG" -ldflags "-s" \
-            -os ${{ matrix.target }} -arch ${{ matrix.arch }} -cc ${{ matrix.cc }} \
-            -o releases/${{ matrix.output }} .
+            -os ${{ matrix.v_os }} -cc ${{ matrix.cc }} \
+            -o releases/${{ matrix.artifact-name }} .
         shell: bash
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.output }}
-          path: releases/${{ matrix.output }}
+          name: ${{ matrix.artifact-name }}
+          path: releases/${{ matrix.artifact-name }}
