@@ -1,7 +1,7 @@
 tempCodeRunnerFile.v
-main.exe
 releases/
 .vscode/
+*.exe
 *.log
 *.tmp
 *.bak
