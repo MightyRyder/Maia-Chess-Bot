@@ -34,6 +34,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ---- Install the V compiler ----
       - name: Download and install V
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -47,18 +48,18 @@ jobs:
           fi
         shell: bash
 
-      # ---- Windows: manually install raylib C library ----
-      - name: Install raylib (Windows)
+      # ---- Raylib C libraries ----
+      # Windows: download prebuilt, extract to a DIFFERENT folder name
+      - name: Install raylib C (Windows)
         if: runner.os == 'Windows'
         run: |
           curl -L -o raylib.zip "${{ matrix.raylib_url }}"
-          unzip -q raylib.zip -d raylib
-          echo "RAYLIB_INCLUDE=$PWD/raylib/raylib-5.0_win64_msvc16/include" >> $GITHUB_ENV
-          echo "RAYLIB_LIB=$PWD/raylib/raylib-5.0_win64_msvc16/lib" >> $GITHUB_ENV
+          unzip -q raylib.zip -d raylib_c
+          echo "RAYLIB_INCLUDE=$PWD/raylib_c/raylib-5.0_win64_msvc16/include" >> $GITHUB_ENV
+          echo "RAYLIB_LIB=$PWD/raylib_c/raylib-5.0_win64_msvc16/lib" >> $GITHUB_ENV
         shell: bash
 
-      # ---- Linux: install dev libraries ----
-      - name: Install raylib (Linux)
+      - name: Install raylib C (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -66,23 +67,24 @@ jobs:
             libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev libxinerama-dev \
             libwayland-dev libxkbcommon-dev
 
-      # ---- macOS: install raylib ----
-      - name: Install raylib (macOS)
+      - name: Install raylib C (macOS)
         if: runner.os == 'macOS'
         run: brew install raylib
 
-      # ---- Install V raylib module (all OSes) ----
+      # ---- Install the V raylib module (clone from GitHub, works on all OSes) ----
       - name: Install V raylib module
-        run: v install raylib
+        run: git clone --depth 1 https://github.com/vlang/raylib.git $HOME/.vmodules/raylib
         shell: bash
 
       - name: Create releases directory
         run: mkdir -p releases
 
+      # ---- Build (different paths for Windows) ----
       - name: Build
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            v -skip-unused -cflags "-O3 -DNDEBUG -I$RAYLIB_INCLUDE" -ldflags "-s -L$RAYLIB_LIB -lraylib" \
+            v -skip-unused -cflags "-O3 -DNDEBUG -I$RAYLIB_INCLUDE" \
+              -ldflags "-s -L$RAYLIB_LIB -lraylib" \
               -os ${{ matrix.v_os }} -cc ${{ matrix.cc }} \
               -o releases/${{ matrix.artifact-name }} .
           else
