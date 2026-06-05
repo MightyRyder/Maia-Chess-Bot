@@ -1,6 +1,3 @@
-// Chess in V + Raylib
-// Reworked to include:
-
 module main
 
 import rand
