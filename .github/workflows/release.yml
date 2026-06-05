@@ -1,0 +1,60 @@
+name: Build and release
+
+on:
+  push:
+    tags:
+      - 'v*'          # triggers on tags like v1.0.0
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+            arch: amd64
+            cc: gcc
+            output: main_windows_x64.exe
+            raylib_install: |
+              v setup raylib
+          - os: ubuntu-latest
+            target: linux
+            arch: amd64
+            cc: gcc
+            output: main_linux_x64
+            raylib_install: |
+              sudo apt-get update
+              sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev libxinerama-dev libwayland-dev libxkbcommon-dev
+          - os: macos-latest
+            target: macos
+            arch: arm64
+            cc: clang
+            output: main_macos_arm64
+            raylib_install: |
+              brew install raylib
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup V
+        uses: vlang/setup-v@v1
+
+      - name: Install Raylib (if needed)
+        run: ${{ matrix.raylib_install }}
+        shell: bash
+
+      - name: Build
+        run: |
+          v -skip-unused -cflags "-O3 -DNDEBUG" -ldflags "-s" \
+            -os ${{ matrix.target }} -arch ${{ matrix.arch }} -cc ${{ matrix.cc }} \
+            -o releases/${{ matrix.output }} .
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output }}
+          path: releases/${{ matrix.output }}
