@@ -1,2 +1,2 @@
-# Maia-Chess-Bot
-Locally trained amdgpu chess bot
+# Maia Chess Bot
+Locally trained amdgpu chess bot, using bitboards
