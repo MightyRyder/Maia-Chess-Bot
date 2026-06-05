@@ -16,6 +16,7 @@ jobs:
             v_os: windows
             v_url: https://github.com/vlang/v/releases/latest/download/v_windows.zip
             cc: msvc
+            raylib_url: https://github.com/raysan5/raylib/releases/download/5.0/raylib-5.0_win64_msvc16.zip
           - os: ubuntu-latest
             artifact-name: main_linux_x64
             v_os: linux
@@ -46,12 +47,18 @@ jobs:
           fi
         shell: bash
 
-      - name: Install Raylib (Windows)
+      # ---- Windows: manually install raylib C library ----
+      - name: Install raylib (Windows)
         if: runner.os == 'Windows'
-        run: v setup raylib
+        run: |
+          curl -L -o raylib.zip "${{ matrix.raylib_url }}"
+          unzip -q raylib.zip -d raylib
+          echo "RAYLIB_INCLUDE=$PWD/raylib/raylib-5.0_win64_msvc16/include" >> $GITHUB_ENV
+          echo "RAYLIB_LIB=$PWD/raylib/raylib-5.0_win64_msvc16/lib" >> $GITHUB_ENV
         shell: bash
 
-      - name: Install Raylib (Linux)
+      # ---- Linux: install dev libraries ----
+      - name: Install raylib (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -59,18 +66,30 @@ jobs:
             libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev libxinerama-dev \
             libwayland-dev libxkbcommon-dev
 
-      - name: Install Raylib (macOS)
+      # ---- macOS: install raylib ----
+      - name: Install raylib (macOS)
         if: runner.os == 'macOS'
         run: brew install raylib
+
+      # ---- Install V raylib module (all OSes) ----
+      - name: Install V raylib module
+        run: v install raylib
+        shell: bash
 
       - name: Create releases directory
         run: mkdir -p releases
 
       - name: Build
         run: |
-          v -skip-unused -cflags "-O3 -DNDEBUG" -ldflags "-s" \
-            -os ${{ matrix.v_os }} -cc ${{ matrix.cc }} \
-            -o releases/${{ matrix.artifact-name }} .
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            v -skip-unused -cflags "-O3 -DNDEBUG -I$RAYLIB_INCLUDE" -ldflags "-s -L$RAYLIB_LIB -lraylib" \
+              -os ${{ matrix.v_os }} -cc ${{ matrix.cc }} \
+              -o releases/${{ matrix.artifact-name }} .
+          else
+            v -skip-unused -cflags "-O3 -DNDEBUG" -ldflags "-s" \
+              -os ${{ matrix.v_os }} -cc ${{ matrix.cc }} \
+              -o releases/${{ matrix.artifact-name }} .
+          fi
         shell: bash
 
       - name: Upload artifact
