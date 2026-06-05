@@ -8,20 +8,21 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
             artifact-name: main_windows_x64.exe
             v_os: windows
+            v_url: https://github.com/vlang/v/releases/latest/download/v_windows.zip
             cc: msvc
+            raylib_cache_key: raylib-windows
           - os: ubuntu-latest
             artifact-name: main_linux_x64
             v_os: linux
+            v_url: https://github.com/vlang/v/releases/latest/download/v_linux.zip
             cc: gcc
-          - os: macos-latest
-            artifact-name: main_macos_arm64
-            v_os: macos
-            cc: clang
+            raylib_cache_key: ''
 
     runs-on: ${{ matrix.os }}
 
@@ -29,28 +30,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download and install V (prebuilt)
+      - name: Download and install V
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            V_URL="https://github.com/vlang/v/releases/latest/download/v_windows.zip"
-            curl -L -o v.zip "$V_URL"
+            curl -L -o v.zip "${{ matrix.v_url }}"
             unzip -q v.zip -d v_install
             echo "$PWD/v_install/v" >> $GITHUB_PATH
-          elif [ "$RUNNER_OS" = "Linux" ]; then
-            V_URL="https://github.com/vlang/v/releases/latest/download/v_linux.zip"
-            curl -L -o v.zip "$V_URL"
-            sudo unzip -q v.zip -d /usr/local/v
-            echo "/usr/local/v/v" >> $GITHUB_PATH
           else
-            V_URL="https://github.com/vlang/v/releases/latest/download/v_macos.zip"
-            curl -L -o v.zip "$V_URL"
+            curl -L -o v.zip "${{ matrix.v_url }}"
             sudo unzip -q v.zip -d /usr/local/v
             echo "/usr/local/v/v" >> $GITHUB_PATH
           fi
         shell: bash
 
-      - name: Install Raylib (Windows)
+      - name: Cache Raylib (Windows)
         if: runner.os == 'Windows'
+        id: cache-raylib-win
+        uses: actions/cache@v3
+        with:
+          path: ~/.vmodules/cache/raylib
+          key: raylib-win-${{ runner.os }}-${{ hashFiles('v.mod') }}
+
+      - name: Install Raylib (Windows)
+        if: runner.os == 'Windows' && steps.cache-raylib-win.outputs.cache-hit != 'true'
         run: v setup raylib
 
       - name: Install Raylib (Linux)
