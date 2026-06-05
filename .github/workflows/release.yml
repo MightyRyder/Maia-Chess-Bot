@@ -17,11 +17,14 @@ jobs:
             v_url: https://github.com/vlang/v/releases/latest/download/v_windows.zip
             cc: gcc
             raylib_url: https://github.com/raysan5/raylib/releases/download/5.0/raylib-5.0_win64_mingw-w64.zip
+            raylib_folder: raylib-5.0_win64_mingw-w64
           - os: ubuntu-latest
             artifact-name: main_linux_x64
             v_os: linux
             v_url: https://github.com/vlang/v/releases/latest/download/v_linux.zip
             cc: gcc
+            raylib_url: https://github.com/raysan5/raylib/releases/download/5.0/raylib-5.0_linux_amd64.tar.gz
+            raylib_folder: raylib-5.0_linux_amd64
           - os: macos-latest
             artifact-name: main_macos_arm64
             v_os: macos
@@ -48,7 +51,7 @@ jobs:
           fi
         shell: bash
 
-      # ---- Windows: install MinGW ----
+      # ---- Windows: install MinGW (needed for gcc) ----
       - name: Install MinGW (Windows)
         if: runner.os == 'Windows'
         run: |
@@ -56,23 +59,20 @@ jobs:
           echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> $GITHUB_PATH
         shell: bash
 
-      # ---- Raylib C libraries ----
-      - name: Install raylib C (Windows)
-        if: runner.os == 'Windows'
+      # ---- Raylib C library (same approach for Windows and Linux) ----
+      - name: Download and extract raylib C library (Windows / Linux)
+        if: runner.os != 'macOS'
         run: |
-          curl -L -o raylib.zip "${{ matrix.raylib_url }}"
-          unzip -q raylib.zip -d raylib_c
-          echo "RAYLIB_INCLUDE=$PWD/raylib_c/raylib-5.0_win64_mingw-w64/include" >> $GITHUB_ENV
-          echo "RAYLIB_LIB=$PWD/raylib_c/raylib-5.0_win64_mingw-w64/lib" >> $GITHUB_ENV
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            curl -L -o raylib.zip "${{ matrix.raylib_url }}"
+            unzip -q raylib.zip -d raylib_c
+          else
+            curl -L -o raylib.tar.gz "${{ matrix.raylib_url }}"
+            tar -xzf raylib.tar.gz -C raylib_c --strip-components=1
+          fi
+          echo "RAYLIB_INCLUDE=$PWD/raylib_c/${{ matrix.raylib_folder }}/include" >> $GITHUB_ENV
+          echo "RAYLIB_LIB=$PWD/raylib_c/${{ matrix.raylib_folder }}/lib" >> $GITHUB_ENV
         shell: bash
-
-      - name: Install raylib C (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxi-dev \
-            libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev libxinerama-dev \
-            libwayland-dev libxkbcommon-dev libraylib-dev
 
       - name: Install raylib C (macOS)
         if: runner.os == 'macOS'
@@ -89,9 +89,11 @@ jobs:
       # ---- Build ----
       - name: Build
         run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            v -skip-unused -cflags "-O3 -DNDEBUG -I$RAYLIB_INCLUDE" \
-              -ldflags "-s -L$RAYLIB_LIB -lraylib" \
+          echo "RAYLIB_INCLUDE = $RAYLIB_INCLUDE"
+          echo "RAYLIB_LIB = $RAYLIB_LIB"
+          if [ "$RUNNER_OS" = "Windows" ] || [ "$RUNNER_OS" = "Linux" ]; then
+            v -skip-unused -cflags "-O3 -DNDEBUG -I${RAYLIB_INCLUDE}" \
+              -ldflags "-s -L${RAYLIB_LIB} -lraylib" \
               -os ${{ matrix.v_os }} -cc ${{ matrix.cc }} \
               -o releases/${{ matrix.artifact-name }} .
           else
