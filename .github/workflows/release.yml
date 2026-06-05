@@ -15,8 +15,8 @@ jobs:
             artifact-name: main_windows_x64.exe
             v_os: windows
             v_url: https://github.com/vlang/v/releases/latest/download/v_windows.zip
-            cc: msvc
-            raylib_url: https://github.com/raysan5/raylib/releases/download/5.0/raylib-5.0_win64_msvc16.zip
+            cc: gcc
+            raylib_url: https://github.com/raysan5/raylib/releases/download/5.0/raylib-5.0_win64_mingw-w64.zip
           - os: ubuntu-latest
             artifact-name: main_linux_x64
             v_os: linux
@@ -48,15 +48,22 @@ jobs:
           fi
         shell: bash
 
+      # ---- Windows: install MinGW ----
+      - name: Install MinGW (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install mingw -y
+          echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> $GITHUB_PATH
+        shell: bash
+
       # ---- Raylib C libraries ----
-      # Windows: download prebuilt, extract to a DIFFERENT folder name
       - name: Install raylib C (Windows)
         if: runner.os == 'Windows'
         run: |
           curl -L -o raylib.zip "${{ matrix.raylib_url }}"
           unzip -q raylib.zip -d raylib_c
-          echo "RAYLIB_INCLUDE=$PWD/raylib_c/raylib-5.0_win64_msvc16/include" >> $GITHUB_ENV
-          echo "RAYLIB_LIB=$PWD/raylib_c/raylib-5.0_win64_msvc16/lib" >> $GITHUB_ENV
+          echo "RAYLIB_INCLUDE=$PWD/raylib_c/raylib-5.0_win64_mingw-w64/include" >> $GITHUB_ENV
+          echo "RAYLIB_LIB=$PWD/raylib_c/raylib-5.0_win64_mingw-w64/lib" >> $GITHUB_ENV
         shell: bash
 
       - name: Install raylib C (Linux)
@@ -65,13 +72,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxi-dev \
             libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev libxinerama-dev \
-            libwayland-dev libxkbcommon-dev
+            libwayland-dev libxkbcommon-dev libraylib-dev
 
       - name: Install raylib C (macOS)
         if: runner.os == 'macOS'
         run: brew install raylib
 
-      # ---- Install the V raylib module (clone from GitHub, works on all OSes) ----
+      # ---- Install the V raylib module ----
       - name: Install V raylib module
         run: git clone --depth 1 https://github.com/vlang/raylib.git $HOME/.vmodules/raylib
         shell: bash
@@ -79,7 +86,7 @@ jobs:
       - name: Create releases directory
         run: mkdir -p releases
 
-      # ---- Build (different paths for Windows) ----
+      # ---- Build ----
       - name: Build
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
