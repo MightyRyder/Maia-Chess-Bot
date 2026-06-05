@@ -6,6 +6,20 @@ module main
 import rand
 import raylib as rl
 
+const b_bishop_bytes  = $embed_file('chess7/bB.png').to_bytes()
+const b_knight_bytes  = $embed_file('chess7/bN.png').to_bytes()
+const b_rook_bytes    = $embed_file('chess7/bR.png').to_bytes()
+const b_queen_bytes   = $embed_file('chess7/bQ.png').to_bytes()
+const b_king_bytes    = $embed_file('chess7/bK.png').to_bytes()
+const b_pawn_bytes    = $embed_file('chess7/bP.png').to_bytes()
+
+const w_bishop_bytes  = $embed_file('chess7/wB.png').to_bytes()
+const w_knight_bytes  = $embed_file('chess7/wN.png').to_bytes()
+const w_rook_bytes    = $embed_file('chess7/wR.png').to_bytes()
+const w_queen_bytes   = $embed_file('chess7/wQ.png').to_bytes()
+const w_king_bytes    = $embed_file('chess7/wK.png').to_bytes()
+const w_pawn_bytes    = $embed_file('chess7/wP.png').to_bytes()
+
 const square_size = 80
 const board_pixels = square_size * 8
 const window_w = board_pixels
@@ -72,18 +86,44 @@ mut:
 	promotion_moves []Move
 }
 
-fn load_piece_textures() map[string]rl.Texture2D {
+fn get_embedded_map() map[string][]u8 {
+	return {
+		'bB': b_bishop_bytes
+		'bN': b_knight_bytes
+		'bR': b_rook_bytes
+		'bQ': b_queen_bytes
+		'bK': b_king_bytes
+		'bP': b_pawn_bytes
+		'wB': w_bishop_bytes
+		'wN': w_knight_bytes
+		'wR': w_rook_bytes
+		'wQ': w_queen_bytes
+		'wK': w_king_bytes
+		'wP': w_pawn_bytes
+	}
+}
+
+fn load_piece_textures_embedded(emb map[string][]u8) map[string]rl.Texture2D {
 	mut tex := map[string]rl.Texture2D{}
 	colors := ['w', 'b']
 	pieces := ['P', 'N', 'B', 'R', 'Q', 'K']
 	for c in colors {
 		for p in pieces {
-			path := 'chess7/${c}${p}.png'
-			img := rl.load_texture(path)
-			if img.id == 0 {
-				println('Warning: failed to load texture $path')
+			key := '${c}${p}'
+			if data := emb[key] {
+				if data.len == 0 {
+					println('Warning: empty embedded file for $key')
+					continue
+				}
+				img := rl.load_image_from_memory('.png', &data[0], data.len)
+				if img.width == 0 || img.height == 0 {
+					println('Warning: failed to decode $key from memory')
+				} else {
+					tex[key] = rl.load_texture_from_image(img)
+					rl.unload_image(img)
+				}
 			} else {
-				tex['${c}${p}'] = img
+				println('Warning: embedded file for $key not found')
 			}
 		}
 	}
@@ -882,12 +922,13 @@ fn (mut gs GameState) handle_promotion_click(mouse_x int, mouse_y int) {
 }
 
 fn main() {
-	rl.init_window(window_w, window_h, 'Chess — V + Raylib')
+	rl.init_window(window_w, window_h, 'Maia Chess Stardance Project')
 	rl.set_target_fps(fps)
 
 	mut gs := new_game()
 
-	mut piece_textures := load_piece_textures()
+	embedded_map := get_embedded_map()
+	mut piece_textures := load_piece_textures_embedded(embedded_map)
 	defer {
 		for _, tex in piece_textures {
 			rl.unload_texture(tex)
