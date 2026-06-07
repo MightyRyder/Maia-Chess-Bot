@@ -1,0 +1,143 @@
+name: Build and release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: main_windows_x64.exe
+            v_url: https://github.com/vlang/v/releases/latest/download/v_windows.zip
+            v_exe: v.exe
+            cc: gcc
+            raylib_url: https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_win64_mingw-w64.zip
+            raylib_dir: raylib-6.0_win64_mingw-w64
+            extra_cflags: -D_DEFAULT_SOURCE
+
+          - os: ubuntu-latest
+            artifact: main_linux_x64
+            v_url: https://github.com/vlang/v/releases/latest/download/v_linux.zip
+            v_exe: v
+            cc: gcc
+            raylib_url: https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_linux_amd64.tar.gz
+            raylib_dir: raylib-6.0_linux_amd64
+            extra_cflags: ''
+
+          - os: macos-latest
+            artifact: main_macos_arm64
+            v_url: https://github.com/vlang/v/releases/latest/download/v_macos_arm64.zip
+            v_exe: v
+            cc: clang
+            raylib_url: ''
+            raylib_dir: ''
+            extra_cflags: ''
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. Install V compiler
+      - name: Download and install V
+        run: |
+          curl -L -o v_archive.zip "${{ matrix.v_url }}"
+          unzip -q v_archive.zip -d v_install
+
+          # The archive extracts to v_install/v/ on all platforms.
+          # Find the directory that actually contains the v / v.exe binary.
+          V_BIN_DIR=$(dirname "$(find "$PWD/v_install" -maxdepth 3 -name "${{ matrix.v_exe }}" -type f | head -1)")
+          if [ -z "$V_BIN_DIR" ]; then
+            echo "ERROR: could not locate ${{ matrix.v_exe }} after extraction"
+            find "$PWD/v_install" | head -40
+            exit 1
+          fi
+          echo "Found V binary in: $V_BIN_DIR"
+          echo "$V_BIN_DIR" >> $GITHUB_PATH
+        shell: bash
+
+      # 2. Install MinGW-w64 on Windows (needed for gcc)
+      - name: Install MinGW (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install mingw -y
+          echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> $GITHUB_PATH
+        shell: bash
+
+      # 3. Install Raylib C libraries
+      - name: Install raylib (Windows / Linux)
+        if: runner.os != 'macOS'
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            curl -L -o raylib.zip "${{ matrix.raylib_url }}"
+            unzip -q raylib.zip
+          else
+            curl -L -o raylib.tar.gz "${{ matrix.raylib_url }}"
+            tar -xzf raylib.tar.gz
+            sudo apt-get update -qq
+            sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxi-dev \
+              libgl1-mesa-dev libglu1-mesa-dev libxcursor-dev libxinerama-dev \
+              libwayland-dev libxkbcommon-dev
+          fi
+          echo "RAYLIB_DIR=${{ github.workspace }}/${{ matrix.raylib_dir }}" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Install raylib (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install raylib
+          echo "RAYLIB_DIR=$(brew --prefix raylib)" >> $GITHUB_ENV
+
+      # 4. Clone the V raylib module
+      - name: Install V raylib module
+        run: git clone --depth 1 https://github.com/vlang/raylib.git "$HOME/.vmodules/raylib"
+        shell: bash
+
+      # 5. Build
+      - name: Build
+        run: |
+          mkdir -p releases
+
+          # Verify V is on PATH before building
+          which ${{ matrix.v_exe }} || { echo "v not found on PATH"; exit 1; }
+
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            ${{ matrix.v_exe }} -skip-unused \
+              -cflags "-O3 -DNDEBUG -I${RAYLIB_DIR}/include" \
+              -ldflags "-L${RAYLIB_DIR}/lib -lraylib" \
+              -cc ${{ matrix.cc }} -o releases/${{ matrix.artifact }} .
+          else
+            ${{ matrix.v_exe }} -skip-unused \
+              -cflags "-O3 -DNDEBUG ${{ matrix.extra_cflags }} -I${RAYLIB_DIR}/include" \
+              -ldflags "-s -L${RAYLIB_DIR}/lib -lraylib" \
+              -cc ${{ matrix.cc }} -o releases/${{ matrix.artifact }} .
+          fi
+        shell: bash
+
+      # 6. Upload artifact
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: releases/${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: releases/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: releases/**/*
