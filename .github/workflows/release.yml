@@ -12,7 +12,7 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact: main_windows_x64.exe
+            artifact: MaiaChessBot_windows_x64.exe
             v_url: https://github.com/vlang/v/releases/latest/download/v_windows.zip
             v_exe: v.exe
             cc: gcc
@@ -21,7 +21,7 @@ jobs:
             extra_cflags: -D_DEFAULT_SOURCE
 
           - os: ubuntu-latest
-            artifact: main_linux_x64
+            artifact: MaiaChessBot_linux_x64
             v_url: https://github.com/vlang/v/releases/latest/download/v_linux.zip
             v_exe: v
             cc: gcc
@@ -30,7 +30,7 @@ jobs:
             extra_cflags: ''
 
           - os: macos-latest
-            artifact: main_macos_arm64
+            artifact: MaiaChessBot_macos_arm64
             v_url: https://github.com/vlang/v/releases/latest/download/v_macos_arm64.zip
             v_exe: v
             cc: clang
