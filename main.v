@@ -239,21 +239,29 @@ fn (gs &GameState) king_sq(white bool) int {
 fn (gs &GameState) square_attacked(sq int, by_white bool) bool {
 	// pawns
 	if by_white {
-		if file_of(sq) > 0 && on_board(sq + 9) && gs.board[sq + 9] == piece_pawn {
-			return true
-		}
-		if file_of(sq) < 7 && on_board(sq + 7) && gs.board[sq + 7] == piece_pawn {
-			return true
+		// white pawns attack upward (to lower index). A white pawn at sq+7 or sq+9
+		// attacks sq — but only if it doesn't wrap across the file boundary.
+		if rank_of(sq) + 1 < 8 {
+			if file_of(sq) > 0 && gs.board[sq + 7] == piece_pawn {
+				return true
+			}
+			if file_of(sq) < 7 && gs.board[sq + 9] == piece_pawn {
+				return true
+			}
 		}
 	} else {
-		if file_of(sq) > 0 && on_board(sq - 7) && gs.board[sq - 7] == -piece_pawn {
-			return true
-		}
-		if file_of(sq) < 7 && on_board(sq - 9) && gs.board[sq - 9] == -piece_pawn {
-			return true
+		// black pawns attack downward (to higher index). A black pawn at sq-7 or sq-9
+		// attacks sq — but only if it doesn't wrap across the file boundary.
+		if rank_of(sq) - 1 >= 0 {
+			if file_of(sq) < 7 && gs.board[sq - 7] == -piece_pawn {
+				return true
+			}
+			if file_of(sq) > 0 && gs.board[sq - 9] == -piece_pawn {
+				return true
+			}
 		}
 	}
-
+	
 	// knights
 	knight_steps := [
 		[-2, -1], [-2, 1], [-1, -2], [-1, 2],
