@@ -2,17 +2,26 @@ name: Build and release
 
 on:
   push:
+    branches:
+      - dev        # rolling dev build
     tags:
-      - 'v*'
+      - 'v*'       # stable release (tag on main)
+  pull_request:
+    types: [closed]
+    branches:
+      - main       # promote dev → stable on merge
 
 jobs:
   build:
+    # Only build on dev push, not on PR merge or tag
+    # (tag releases are promoted from existing dev artifacts)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
-            artifact: MaiaChessBot_windows_x64.exe
+            artifact: main_windows_x64.exe
             v_url: https://github.com/vlang/v/releases/latest/download/v_windows.zip
             v_exe: v.exe
             cc: gcc
@@ -21,7 +30,7 @@ jobs:
             extra_cflags: -D_DEFAULT_SOURCE
 
           - os: ubuntu-latest
-            artifact: MaiaChessBot_linux_x64
+            artifact: main_linux_x64
             v_url: https://github.com/vlang/v/releases/latest/download/v_linux.zip
             v_exe: v
             cc: gcc
@@ -30,7 +39,7 @@ jobs:
             extra_cflags: ''
 
           - os: macos-latest
-            artifact: MaiaChessBot_macos_arm64
+            artifact: main_macos_arm64
             v_url: https://github.com/vlang/v/releases/latest/download/v_macos_arm64.zip
             v_exe: v
             cc: clang
@@ -43,14 +52,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1. Install V compiler
       - name: Download and install V
         run: |
           curl -L -o v_archive.zip "${{ matrix.v_url }}"
           unzip -q v_archive.zip -d v_install
-
-          # The archive extracts to v_install/v/ on all platforms.
-          # Find the directory that actually contains the v / v.exe binary.
           V_BIN_DIR=$(dirname "$(find "$PWD/v_install" -maxdepth 3 -name "${{ matrix.v_exe }}" -type f | head -1)")
           if [ -z "$V_BIN_DIR" ]; then
             echo "ERROR: could not locate ${{ matrix.v_exe }} after extraction"
@@ -61,7 +66,6 @@ jobs:
           echo "$V_BIN_DIR" >> $GITHUB_PATH
         shell: bash
 
-      # 2. Install MinGW-w64 on Windows (needed for gcc)
       - name: Install MinGW (Windows)
         if: runner.os == 'Windows'
         run: |
@@ -69,7 +73,6 @@ jobs:
           echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> $GITHUB_PATH
         shell: bash
 
-      # 3. Install Raylib C libraries
       - name: Install raylib (Windows / Linux)
         if: runner.os != 'macOS'
         run: |
@@ -93,19 +96,14 @@ jobs:
           brew install raylib
           echo "RAYLIB_DIR=$(brew --prefix raylib)" >> $GITHUB_ENV
 
-      # 4. Clone the V raylib module
       - name: Install V raylib module
         run: git clone --depth 1 https://github.com/vlang/raylib.git "$HOME/.vmodules/raylib"
         shell: bash
 
-      # 5. Build
       - name: Build
         run: |
           mkdir -p releases
-
-          # Verify V is on PATH before building
           which ${{ matrix.v_exe }} || { echo "v not found on PATH"; exit 1; }
-
           if [ "$RUNNER_OS" = "macOS" ]; then
             ${{ matrix.v_exe }} -skip-unused \
               -cflags "-O3 -DNDEBUG -I${RAYLIB_DIR}/include" \
@@ -119,25 +117,51 @@ jobs:
           fi
         shell: bash
 
-      # 6. Upload artifact
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: releases/${{ matrix.artifact }}
 
-  release:
+  # Runs after every dev commit — overwrites the rolling "dev" release
+  release-dev:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: releases/
 
-      - name: Create GitHub Release
+      - name: Overwrite rolling dev release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: dev
+          name: "Dev build (unstable)"
+          prerelease: true
           files: releases/**/*
+
+  # Runs when a PR into main is merged — promotes dev artifacts to stable
+  promote-to-stable:
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download dev release assets
+        run: gh release download dev --dir releases/
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+      - name: Create stable release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.pull_request.title }}
+          name: ${{ github.event.pull_request.title }}
+          prerelease: false
+          files: releases/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
