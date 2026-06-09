@@ -151,7 +151,7 @@ jobs:
       contents: write
     steps:
       - name: Download dev release assets
-        run: gh release download dev --dir releases/
+        run: gh release download pre-release --dir releases/
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
