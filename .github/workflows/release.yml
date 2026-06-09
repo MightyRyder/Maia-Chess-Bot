@@ -138,7 +138,7 @@ jobs:
       - name: Overwrite rolling dev release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: dev
+          tag_name: pre-release
           name: "Dev build (unstable)"
           prerelease: true
           files: releases/**/*
