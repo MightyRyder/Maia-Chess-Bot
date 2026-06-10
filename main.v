@@ -1,5 +1,5 @@
 module main
-
+import net.http
 import rand
 import os
 import raylib as rl
@@ -209,39 +209,100 @@ fn build_castling_flags(gs &GameState) string {
            '${if gs.b_rook_h_moved { 1 } else { 0 }}'
 }
 
+// Resolves the standard OS user-data directory for the application data
+fn get_maia_install_dir() string {
+	base_data_dir := os.data_dir() // Universally handles AppData, .local/share, etc.
+	return os.join_path(base_data_dir, 'v_chess', 'maia_installation')
+}
+
+// Determines the binary executable filename depending on the platform
+fn get_maia_exe_path() string {
+	dir := get_maia_install_dir()
+	$if windows {
+		return os.join_path(dir, 'maia_backend.exe')
+	} $else {
+		return os.join_path(dir, 'maia_backend')
+	}
+}
+
+// Runs a check at startup; downloads and unzips backend assets if they don't exist
+fn ensure_maia_installed() ! {
+	exe_path := get_maia_exe_path()
+	if os.exists(exe_path) {
+		return // Asset already exists, bypass download
+	}
+
+	println('Maia backend not found. Beginning automatic installation...')
+	install_dir := get_maia_install_dir()
+	os.mkdir_all(install_dir)?
+
+	// Dynamically build target release URL based on platform
+	// Swap out YOUR_USERNAME and YOUR_REPO with your actual GitHub project credentials
+	mut download_url := 'https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/backend-assets/'
+	$if windows {
+		download_url += 'maia_windows_x64.zip'
+	} $if linux {
+		download_url += 'maia_linux_x64.zip'
+	} $if macos {
+		download_url += 'maia_macos_arm64.zip'
+	}
+
+	zip_path := os.join_path(install_dir, 'backend.zip')
+	
+	// Download binary payload
+	http.download_file(download_url, zip_path)?
+
+	// Extract the archive cleanly utilizing native OS binaries
+	$if windows {
+		os.execute('powershell -Command "Expand-Archive -Path \'${zip_path}\' -DestinationPath \'${install_dir}\' -Force"')
+	} $else {
+		os.execute('unzip -q "${zip_path}" -d "${install_dir}"')
+		os.chmod(exe_path, 0o755)? // Set execution bits on UNIX systems
+	}
+
+	// Clean up zip cache
+	os.rm(zip_path)?
+	println('Maia backend successfully deployed to: $install_dir')
+}
+
 fn new_maia_bot() &MaiaBot {
-    bot_dir := 'C:\\Users\\green\\VSCode Projects\\V Chess'
-    python_exe := 'C:\\Users\\green\\AppData\\Local\\Python\\bin\\python.exe'
+	// First, verify everything is downloaded and extracted
+	ensure_maia_installed() or {
+		eprintln('ERROR: Failed to verify or install maia backend: $err')
+		return &MaiaBot{ process: unsafe { nil }, ready: false }
+	}
 
-    mut p := os.new_process(python_exe)
-    p.set_args([ bot_dir + '\\bot.py' ])
+	exe_path := get_maia_exe_path()
+	install_dir := get_maia_install_dir()
 
-    // This is the key line – makes the child see the same folder as the script.
-    p.work_folder = bot_dir
+	// Launch the compiled standalone binary directly
+	mut p := os.new_process(exe_path)
+	p.work_folder = install_dir // Keeps file context confined to installation path
 
-    // (Optional) Forward the parent environment so conda/PYTHONPATH etc. work.
-    // p.env = os.environ()
+	p.run()
 
-    p.run()
+	if p.pid == 0 {
+		eprintln('ERROR: failed to launch maia bot (PID 0)')
+		return &MaiaBot{ process: unsafe { nil }, ready: false }
+	}
 
-    if p.pid == 0 {
-        eprintln('ERROR: failed to launch maia bot (PID 0)')
-        return &MaiaBot{ process: unsafe { nil }, ready: false }
-    }
-
-    println('maia pid: ${p.pid}')
-    return &MaiaBot{ process: p, ready: false }
+	println('maia backend pid: ${p.pid}')
+	return &MaiaBot{ process: p, ready: false }
 }
 
 fn (mut bot MaiaBot) send_move_request(fen string, elo_self int, elo_oppo int) {
-	req := 'C:\\Users\\green\\VSCode Projects\\V Chess\\maia_req.txt'
-	res := 'C:\\Users\\green\\VSCode Projects\\V Chess\\maia_res.txt'
+	install_dir := get_maia_install_dir()
+	req := os.join_path(install_dir, 'maia_req.txt')
+	res := os.join_path(install_dir, 'maia_res.txt')
+	
 	os.rm(res) or {}
 	os.write_file(req, '${fen}|${elo_self}|${elo_oppo}') or {}
 }
 
 fn (mut bot MaiaBot) check_move_response() string {
-	res := 'C:\\Users\\green\\VSCode Projects\\V Chess\\maia_res.txt'
+	install_dir := get_maia_install_dir()
+	res := os.join_path(install_dir, 'maia_res.txt')
+	
 	if !os.exists(res) {
 		return ''
 	}
@@ -1088,11 +1149,10 @@ fn (mut gs GameState) try_player_release(to_sq int) {
 }
 
 fn (mut gs GameState) try_black_move(mut bot MaiaBot, bot_elo int) {
-	if gs.game_over || gs.promoting || gs.white_to_move || bot.thinking {
-		return
-	}
+	if gs.game_over || gs.promoting || gs.white_to_move || bot.thinking { return }
 	if !bot.ready {
-		ready_path := 'C:\\Users\\green\\VSCode Projects\\V Chess\\maia_ready.txt'
+		install_dir := get_maia_install_dir()
+		ready_path := os.join_path(install_dir, 'maia_ready.txt')
 		if os.exists(ready_path) {
 			bot.ready = true
 		} else {

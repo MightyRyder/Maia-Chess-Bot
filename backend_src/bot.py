@@ -181,11 +181,17 @@ def main():
     maia_model = maia2_model_mod.from_pretrained(type=args.game_type, device=args.device)
     prepared = maia2_inf.prepare()
 
-    with open(r'C:\Users\green\VSCode Projects\V Chess\maia_ready.txt', 'w') as f:
-        f.write('ready\n')
+    # Dynamically resolve the absolute path at runtime.
+    # Since V sets p.work_folder, this will point straight to the install directory.
+    base_dir = os.getcwd()
 
-    req = r'C:\Users\green\VSCode Projects\V Chess\maia_req.txt'
-    res = r'C:\Users\green\VSCode Projects\V Chess\maia_res.txt'
+    ready_path = os.path.join(base_dir, 'maia_ready.txt')
+    req        = os.path.join(base_dir, 'maia_req.txt')
+    res        = os.path.join(base_dir, 'maia_res.txt')
+
+    # Signal that the engine is loaded and ready
+    with open(ready_path, 'w') as f:
+        f.write('ready\n')
 
     while True:
         if os.path.exists(req):

@@ -1,0 +1,98 @@
+name: Build Standalone Python Backend
+
+on:
+  push:
+    paths:
+      - 'backend_src/**'
+      - 'models/**'
+      - '.github/workflows/build-backend.yml'
+  workflow_dispatch:
+
+jobs:
+  build-python:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows_x64
+            exe_name: maia_backend.exe
+            zip_name: maia_windows_x64.zip
+          - os: ubuntu-latest
+            platform: linux_x64
+            exe_name: maia_backend
+            zip_name: maia_linux_x64.zip
+          - os: macos-latest
+            platform: macos_arm64
+            exe_name: maia_backend
+            zip_name: maia_macos_arm64.zip
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'backend_src/requirements.txt'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Force PyTorch to pull the lightweight CPU-only wheels (saves ~2+ GB)
+          pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install -r backend_src/requirements.txt
+
+      - name: Compile Python with PyInstaller
+        run: |
+          # Bundles bot.py and its frozen dependencies into a single binary
+          pyinstaller --onefile --name maia_backend backend_src/bot.py
+
+      - name: Stage Distribution Package
+        run: |
+          mkdir -p dist_package
+          # Move the fresh executable into the staging area
+          mv dist/${{ matrix.exe_name }} dist_package/
+          # Copy the model weights directly into the folder alongside the binary
+          cp models/rapid_model.pt dist_package/
+        shell: bash
+
+      - name: Compress Package Assets
+        run: |
+          cd dist_package
+          zip -r ../${{ matrix.zip_name }} ./*
+        shell: bash
+
+      - name: Upload Intermediary Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-zip
+          path: ${{ matrix.zip_name }}
+
+  publish-release:
+    needs: build-python
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Built Platform Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-zip'
+          merge-multiple: true
+
+      - name: Push Assets to GitHub Release Tag
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: backend-assets
+          name: "Maia Backend Compiled Assets"
+          prerelease: true
+          files: |
+            maia_windows_x64.zip
+            maia_linux_x64.zip
+            maia_macos_arm64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
