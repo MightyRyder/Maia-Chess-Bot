@@ -37,16 +37,24 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
+          # Force PyTorch to pull the lightweight CPU-only wheels (saves ~2+ GB)
           pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
           pip install -r backend_src/requirements.txt
       - name: Compile Python with PyInstaller
         run: |
-          pyinstaller --onefile --hidden-import=yaml --name maia_backend backend_src/bot.py
+          # Bundles bot.py and its frozen dependencies into a single binary
+          pyinstaller --onefile --name maia_backend backend_src/bot.py
       - name: Stage Distribution Package
         run: |
           mkdir -p dist_package
+          # Move the fresh executable into the staging area
           mv dist/${{ matrix.exe_name }} dist_package/
+          # Copy the model weights directly into the folder alongside the binary
           cp maia2_models/rapid_model.pt dist_package/
+        shell: bash
+      - name: Install zip (Windows)
+        if: runner.os == 'Windows'
+        run: choco install zip -y
         shell: bash
       - name: Compress Package Assets
         run: |
@@ -69,18 +77,13 @@ jobs:
         with:
           pattern: '*-zip'
           merge-multiple: true
-      - name: Delete old backend-assets release
-        run: gh release delete backend-assets --yes --cleanup-tag || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
+
       - name: Push Assets to GitHub Release Tag
         uses: softprops/action-gh-release@v2
         with:
           tag_name: backend-assets
           name: "Maia Backend Compiled Assets"
           prerelease: true
-          make_latest: false
           files: |
             maia_windows_x64.zip
             maia_linux_x64.zip
