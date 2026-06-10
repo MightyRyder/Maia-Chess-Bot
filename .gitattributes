@@ -1,0 +1,1 @@
+maia2_models/rapid_model.pt filter=lfs diff=lfs merge=lfs -text
