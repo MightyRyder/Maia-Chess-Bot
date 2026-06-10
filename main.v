@@ -1424,12 +1424,15 @@ fn main() {
                     }
                 }
                 if rl.is_mouse_button_released(0) && gs.drag_active {
-                    end_sq := pixel_to_square(mouse_x, mouse_y)
-                    gs.try_player_release(end_sq)
-                    gs.drag_active = false
-                    show_best_move = false
-					current_eval = update_eval(gs, mut maia)
-                }
+					end_sq := pixel_to_square(mouse_x, mouse_y)
+					last_move_count := gs.history.len
+					gs.try_player_release(end_sq)
+					gs.drag_active = false
+					show_best_move = false
+					if gs.history.len > last_move_count {
+						current_eval = update_eval(gs, mut maia)
+					}
+				}
             }
         }
 
