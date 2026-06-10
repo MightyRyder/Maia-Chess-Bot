@@ -1,20 +1,16 @@
 name: Build and release
-
 on:
   push:
     branches:
-      - dev        # rolling dev build
+      - dev
     tags:
-      - 'v*'       # stable release (tag on main)
+      - 'v*'
   pull_request:
     types: [closed]
     branches:
-      - main       # promote dev --> stable on merge
-
+      - main
 jobs:
   build:
-    # Only build on dev push, not on PR merge or tag
-    # (tag releases are promoted from existing dev artifacts)
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     strategy:
       fail-fast: false
@@ -28,7 +24,6 @@ jobs:
             raylib_url: https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_win64_mingw-w64.zip
             raylib_dir: raylib-6.0_win64_mingw-w64
             extra_cflags: -D_DEFAULT_SOURCE
-
           - os: ubuntu-latest
             artifact: main_linux_x64
             v_url: https://github.com/vlang/v/releases/latest/download/v_linux.zip
@@ -37,7 +32,6 @@ jobs:
             raylib_url: https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_linux_amd64.tar.gz
             raylib_dir: raylib-6.0_linux_amd64
             extra_cflags: ''
-
           - os: macos-latest
             artifact: main_macos_arm64
             v_url: https://github.com/vlang/v/releases/latest/download/v_macos_arm64.zip
@@ -46,12 +40,9 @@ jobs:
             raylib_url: ''
             raylib_dir: ''
             extra_cflags: ''
-
     runs-on: ${{ matrix.os }}
-
     steps:
       - uses: actions/checkout@v4
-
       - name: Download and install V
         run: |
           curl -L -o v_archive.zip "${{ matrix.v_url }}"
@@ -65,14 +56,12 @@ jobs:
           echo "Found V binary in: $V_BIN_DIR"
           echo "$V_BIN_DIR" >> $GITHUB_PATH
         shell: bash
-
       - name: Install MinGW (Windows)
         if: runner.os == 'Windows'
         run: |
           choco install mingw -y
           echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> $GITHUB_PATH
         shell: bash
-
       - name: Install raylib (Windows / Linux)
         if: runner.os != 'macOS'
         run: |
@@ -89,17 +78,14 @@ jobs:
           fi
           echo "RAYLIB_DIR=${{ github.workspace }}/${{ matrix.raylib_dir }}" >> $GITHUB_ENV
         shell: bash
-
       - name: Install raylib (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install raylib
           echo "RAYLIB_DIR=$(brew --prefix raylib)" >> $GITHUB_ENV
-
       - name: Install V raylib module
         run: git clone --depth 1 https://github.com/vlang/raylib.git "$HOME/.vmodules/raylib"
         shell: bash
-
       - name: Build
         run: |
           mkdir -p releases
@@ -116,12 +102,10 @@ jobs:
               -cc ${{ matrix.cc }} -o releases/${{ matrix.artifact }} .
           fi
         shell: bash
-
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: releases/${{ matrix.artifact }}
-  
   release-dev:
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     needs: build
@@ -133,13 +117,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: releases/
-
-      - name: Overwrite rolling dev release
+      - name: Delete old pre-release tag
+        run: gh release delete pre-release --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+      - name: Create rolling dev release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: pre-release
           name: "Dev build (unstable)"
           prerelease: true
+          make_latest: false
           body: |
             ### Rolling Development Build
             **Commit:** `${{ github.sha }}`
@@ -147,8 +136,6 @@ jobs:
             **Description:**
             ${{ github.event.head_commit.message }}
           files: releases/**/*
-
-  # Runs when a PR into main is merged - promotes dev artifacts to stable
   promote-to-stable:
     if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
     runs-on: ubuntu-latest
@@ -160,34 +147,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-
       - name: Generate clean release notes
         id: changelog
         run: |
-          # 1. Hit the GitHub API endpoint to calculate the notes
           gh api "repos/${{ github.repository }}/releases/generate-notes" \
             -f tag_name="${{ github.event.pull_request.title }}" \
             -f target_commitish="main" \
             --jq .body > raw_notes.md
-          
-          # 2. Filter out the line containing the PR title/version itself
           grep -v "${{ github.event.pull_request.title }}" raw_notes.md > clean_notes.md
-          
-          # 3. Stream the clean notes securely into a multiline step output
           echo "body<<EOF" >> $GITHUB_OUTPUT
           cat clean_notes.md >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-      
       - name: Create stable release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.pull_request.title }}
           name: ${{ github.event.pull_request.title }}
           prerelease: false
-          body: ${{ steps.changelog.outputs.body }}  # <-- Uses the filtered notes
+          body: ${{ steps.changelog.outputs.body }}
           files: releases/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
