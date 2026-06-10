@@ -70,6 +70,11 @@ struct Move {
 	castle bool
 }
 
+struct BoardSnapshot {
+    board         [64]int
+    white_to_move bool
+}
+
 struct GameState {
 mut:
 	board [64]int
@@ -98,6 +103,8 @@ mut:
 
 	promoting bool
 	promotion_moves []Move
+
+	history []BoardSnapshot
 }
 
 fn get_embedded_map() map[string][]u8 {
@@ -297,19 +304,61 @@ fn (mut bot MaiaBot) send_move_request(fen string, elo_self int, elo_oppo int) {
 	os.write_file(req, '${fen}|${elo_self}|${elo_oppo}') or {}
 }
 
-fn (mut bot MaiaBot) check_move_response() string {
+fn (mut bot MaiaBot) check_move_response() ?string {
 	install_dir := get_maia_install_dir()
 	res := os.join_path(install_dir, 'maia_res.txt')
 	
 	if !os.exists(res) {
-		return ''
+		return none
 	}
-	line := os.read_file(res) or { return '' }
-	os.rm(res) or {}
+	line := os.read_file(res) or { return none }
+	// Don't delete here - let get_eval_from_response() clean up after reading eval
 	if line.starts_with('BEST_MOVE ') {
 		return line['BEST_MOVE '.len..].trim_space()
 	}
-	return ''
+	return none
+}
+
+fn (mut bot MaiaBot) get_eval_from_response() f32 {
+	install_dir := get_maia_install_dir()
+	res := os.join_path(install_dir, 'maia_res.txt')
+	
+	if !os.exists(res) {
+		return 0.0
+	}
+	content := os.read_file(res) or { return 0.0 }
+	os.rm(res) or {}  // Clean up after reading eval
+	
+	for line in content.split('\n') {
+		if line.starts_with('EVAL ') {
+			eval_str := line['EVAL '.len..].trim_space()
+			return eval_str.f32()
+		}
+	}
+	return 0.0
+}
+
+fn update_eval(gs &GameState, mut maia MaiaBot) f32 {
+	// Get evaluation from the maia bot response file
+	return maia.get_eval_from_response()
+}
+
+fn uci_to_squares(move_str string) (int, int) {
+	// Convert UCI notation like "g1f3" to array indices
+	// g1 = file 6, rank 1 = index 6*8 + 1 = 49
+	// f3 = file 5, rank 3 = index 5*8 + 3 = 43
+	if move_str.len < 4 {
+		return -1, -1
+	}
+	from_file := int(move_str[0] - `a`)
+	from_rank := int(move_str[1] - `1`)
+	to_file := int(move_str[2] - `a`)
+	to_rank := int(move_str[3] - `1`)
+	
+	from_sq := from_rank * 8 + from_file
+	to_sq := to_rank * 8 + to_file
+	
+	return from_sq, to_sq
 }
 
 fn board_to_fen(gs &GameState) string {
@@ -566,6 +615,57 @@ fn (gs &GameState) in_check_for(white bool) bool {
 	ksq := gs.king_sq(white)
 	if ksq < 0 { return false }
 	return gs.square_attacked(ksq, !white)
+}
+
+fn (mut gs GameState) save_snapshot() {
+    snapshot := BoardSnapshot{
+        board: gs.board
+        white_to_move: gs.white_to_move
+    }
+    gs.history << snapshot
+}
+
+fn (mut gs GameState) load_snapshot(snapshot BoardSnapshot) {
+    gs.board = snapshot.board
+    gs.white_to_move = snapshot.white_to_move
+}
+
+fn (mut gs GameState) undo_move() {
+    if gs.history.len > 2 {
+        gs.history.pop()
+        gs.history.pop()
+        last_snapshot := gs.history.last()
+        gs.load_snapshot(last_snapshot)
+        gs.refresh_status()
+    }
+}
+
+fn (mut gs GameState) update_eval(mut bot MaiaBot) {
+	if gs.game_over {
+		return
+	}
+
+	fen := board_to_fen(gs)
+
+	max_elo := 2600
+	bot.send_move_request(fen, max_elo, max_elo)
+}
+
+fn draw_best_move_hint(from_sq int, to_sq int) {
+    if from_sq < 0 || to_sq < 0 {
+        return
+    }
+
+    from_x, from_y := square_to_pixel(from_sq)
+    to_x, to_y := square_to_pixel(to_sq)
+
+    rl.draw_rectangle(from_x, from_y, square_size, square_size, rl.Color{0, 228, 48, 100})
+    rl.draw_rectangle(to_x, to_y, square_size, square_size, rl.Color{0, 228, 48, 160})
+
+    start_v := rl.Vector2{f32(from_x + square_size / 2), f32(from_y + square_size / 2)}
+    end_v := rl.Vector2{f32(to_x + square_size / 2), f32(to_y + square_size / 2)}
+
+    rl.draw_line_ex(start_v, end_v, 6.0, rl.Color{0, 228, 48, 225})
 }
 
 fn append_promo_moves(mut moves []Move, from int, to int, en_passant bool, castle bool) {
@@ -1143,6 +1243,7 @@ fn (mut gs GameState) try_player_release(to_sq int) {
 		return
 	}
 
+	gs.save_snapshot()
 	gs.finalize_move(candidates[0])
 }
 
@@ -1166,29 +1267,27 @@ fn (mut gs GameState) apply_pending_move(mut bot MaiaBot) {
 	if !bot.thinking || gs.game_over || gs.promoting || gs.white_to_move {
 		return
 	}
-	best_uci := bot.check_move_response()
-	if best_uci == '' {
-		return
-	}
-	bot.thinking = false
+	if best_uci := bot.check_move_response() {
+		bot.thinking = false
 
-	hint := uci_to_move(best_uci)
-	legal := gs.all_legal_moves(false)
-	mut found := false
-	for mv in legal {
-		if mv.from == hint.from && mv.to == hint.to {
-			if hint.promo == 0 || mv.promo == hint.promo {
-				gs.finalize_move(mv)
-				found = true
-				break
+		hint := uci_to_move(best_uci)
+		legal := gs.all_legal_moves(false)
+		mut found := false
+		for mv in legal {
+			if mv.from == hint.from && mv.to == hint.to {
+				if hint.promo == 0 || mv.promo == hint.promo {
+					gs.finalize_move(mv)
+					found = true
+					break
+				}
 			}
 		}
-	}
-	if !found {
-		eprintln('maia: ${best_uci} not legal, falling back to random')
-		moves := gs.all_legal_moves(false)
-		if moves.len == 0 { gs.refresh_status(); return }
-		gs.finalize_move(moves[rand.intn(moves.len) or { 0 }])
+		if !found {
+			eprintln('maia: ${best_uci} not legal, falling back to random')
+			moves := gs.all_legal_moves(false)
+			if moves.len == 0 { gs.refresh_status(); return }
+			gs.finalize_move(moves[rand.intn(moves.len) or { 0 }])
+		}
 	}
 }
 
@@ -1214,18 +1313,24 @@ fn (mut gs GameState) handle_promotion_click(mouse_x int, mouse_y int) {
 }
 
 fn main() {
-	mut bot_elo := 200
+    mut bot_elo := 200
     min_elo := 200
     max_elo := 2600
     mut is_dragging_elo := false
     mut anim_offset := f64(0.0)
     dark_mode := system_prefers_dark_mode()
 
+    mut current_eval := f32(0.0)
+    mut show_best_move := false
+
+	mut hint_requested := false
+	mut hint_from_sq := -1
+	mut hint_to_sq := -1
+
     rl.set_config_flags(.flag_window_resizable | .flag_vsync_hint)
     rl.init_window(window_w_ext, window_h_ext, 'Maia Chess Stardance Project')
     rl.set_target_fps(fps)
 
-    // Render texture so fullscreen stretches the 16:9 scene
     render_tex := rl.load_render_texture(window_w_ext, window_h_ext)
     defer { rl.unload_render_texture(render_tex) }
 
@@ -1238,29 +1343,62 @@ fn main() {
         for _, tex in piece_textures {
             rl.unload_texture(tex)
         }
-	}
+    }
 
     for !rl.window_should_close() {
         dt := rl.get_frame_time()
         anim_offset += bg_scroll_speed * f64(dt)
         
-        // Grab the physical screen dimensions (moved up here so the mouse can use them)
         sw := f32(rl.get_screen_width())
         sh := f32(rl.get_screen_height())
 
-        // Get the raw physical mouse coordinates
         raw_mouse_x := f32(rl.get_mouse_x())
         raw_mouse_y := f32(rl.get_mouse_y())
 
-        // Map the physical coordinates back to your virtual resolution
         mouse_x := int((raw_mouse_x / sw) * f32(window_w_ext))
         mouse_y := int((raw_mouse_y / sh) * f32(window_h_ext))
+        mouse_pos := rl.Vector2{f32(mouse_x), f32(mouse_y)}
 
         gs.mouse_sq = pixel_to_square(mouse_x, mouse_y)
+
+        slider_x := f32(window_w_ext - 80) 
+        slider_y := f32(100)
+        slider_w := f32(20)
+        slider_h := f32(400)
+
+        btn_w := f32(110)
+        btn_h := f32(35)
+        btn_new_game := rl.Rectangle{ slider_x - 140, slider_y, btn_w, btn_h }
+        btn_undo := rl.Rectangle{ slider_x - 140, slider_y + 50, btn_w, btn_h }
+        btn_best_move := rl.Rectangle{ slider_x - 140, slider_y + 100, btn_w, btn_h }
+
+        status_rect := rl.Rectangle{ slider_x - 270, slider_y, 110, 135 }
+
+        if rl.is_mouse_button_pressed(0) {
+            if rl.check_collision_point_rec(mouse_pos, btn_new_game) {
+                gs = new_game()
+                show_best_move = false
+				current_eval = 0.0
+            } else if rl.check_collision_point_rec(mouse_pos, btn_undo) {
+                gs.undo_move()
+                show_best_move = false
+				current_eval = update_eval(gs, mut maia)
+            } else if rl.check_collision_point_rec(mouse_pos, btn_best_move) {
+				show_best_move = !show_best_move
+				if !show_best_move {
+					hint_requested = false
+					hint_from_sq = -1
+					hint_to_sq = -1
+				}
+			}
+        }
 
         if gs.promoting {
             if rl.is_mouse_button_pressed(0) {
                 gs.handle_promotion_click(mouse_x, mouse_y)
+				if !gs.promoting {
+					current_eval = update_eval(gs, mut maia)
+				}
             }
         } else if !gs.game_over {
             if gs.white_to_move {
@@ -1276,29 +1414,21 @@ fn main() {
                     end_sq := pixel_to_square(mouse_x, mouse_y)
                     gs.try_player_release(end_sq)
                     gs.drag_active = false
+                    show_best_move = false
+					current_eval = update_eval(gs, mut maia)
                 }
             }
         }
 
-		// ---- Slider Dimensions (Adjust X based on your window_w_ext to push it right) ----
-        slider_x := f32(window_w_ext - 120) 
-        slider_y := f32(100)
-        slider_w := f32(20)
-        slider_h := f32(400) // Height of the slider track
-
-        // Calculate the handle's Y position based on current ELO
         elo_percent := f32(bot_elo - min_elo) / f32(max_elo - min_elo)
         handle_y := slider_y + slider_h - (elo_percent * slider_h)
         
-        // Hitboxes
         handle_rect := rl.Rectangle{ slider_x - 10, handle_y - 10, slider_w + 20, 20 }
         track_rect := rl.Rectangle{ slider_x, slider_y, slider_w, slider_h }
 
-        // ---- Slider Input Logic ----
         if rl.is_mouse_button_pressed(0) {
-            // Check if clicking the handle or anywhere on the track
-            if rl.check_collision_point_rec(rl.Vector2{f32(mouse_x), f32(mouse_y)}, handle_rect) ||
-               rl.check_collision_point_rec(rl.Vector2{f32(mouse_x), f32(mouse_y)}, track_rect) {
+            if rl.check_collision_point_rec(mouse_pos, handle_rect) ||
+               rl.check_collision_point_rec(mouse_pos, track_rect) {
                 is_dragging_elo = true
             }
         }
@@ -1308,24 +1438,50 @@ fn main() {
         }
 
         if is_dragging_elo {
-            // Clamp mouse to the physical track bounds so it doesn't break
             mut clamped_y := f32(mouse_y)
             if clamped_y < slider_y { clamped_y = slider_y }
             if clamped_y > slider_y + slider_h { clamped_y = slider_y + slider_h }
 
-            // Convert visual position back to an ELO number
             new_percent := 1.0 - ((clamped_y - slider_y) / slider_h)
             bot_elo = min_elo + int(new_percent * f32(max_elo - min_elo))
         }
 
         if !gs.white_to_move && !gs.promoting && !gs.game_over {
             gs.try_black_move(mut maia, bot_elo)
+            show_best_move = false
         }
         if !gs.white_to_move && !gs.promoting && !gs.game_over {
             gs.apply_pending_move(mut maia)
+			current_eval = update_eval(gs, mut maia)
         }
 
-        // ---- Draw to render texture (virtual 16:9 canvas) ----
+		if gs.white_to_move && show_best_move {
+            if !hint_requested && hint_from_sq == -1 {
+                // Generate the standard FEN layout string from your GameState
+                fen_str := board_to_fen(gs)
+                
+                // Pass the FEN string, Elo value, and 0 (indicating White's perspective)
+                maia.send_move_request(fen_str, bot_elo, 0)
+                hint_requested = true
+            }
+            if hint_requested {
+                // Safely unwrap the optional string response from the text loop file
+                if move_str := maia.check_move_response() {
+                    // Use your native tracker to turn a uci string like "g1f3" into array coordinates
+                    from_sq, to_sq := uci_to_squares(move_str)
+                    hint_from_sq = from_sq
+                    hint_to_sq = to_sq
+                    hint_requested = false
+                }
+            }
+        }
+
+		if !gs.white_to_move {
+			hint_requested = false
+			hint_from_sq = -1
+			hint_to_sq = -1
+		}
+
         rl.begin_texture_mode(render_tex)
         rl.clear_background(rl.Color{20, 20, 20, 255})
 
@@ -1336,29 +1492,55 @@ fn main() {
         draw_pieces(gs, piece_textures)
         draw_coords()
 
-        // Scrolling checkerboard (clipped to the panel)
+        if show_best_move {
+			draw_best_move_hint(hint_from_sq, hint_to_sq)
+		}
+
         draw_scrolling_checkerboard(board_pixels, 0, panel_width, board_pixels, anim_offset, dark_mode)
 
-        // Status bar
-        rl.draw_rectangle(0, board_pixels - 28, window_w_ext, 28, rl.Color{20, 20, 20, 190})
-        col := if gs.game_over || gs.in_check { status_bad_col } else { text_col }
-        rl.draw_text(gs.status, 8, board_pixels - 22, 18, col)
+        rl.draw_rectangle_rec(status_rect, rl.Color{30, 30, 30, 255})
+        rl.draw_rectangle_lines_ex(status_rect, 1, rl.Color{60, 60, 60, 255})
+        
+        status_col := if gs.game_over || gs.in_check { status_bad_col } else { text_col }
+        rl.draw_text(gs.status, int(status_rect.x) + 10, int(status_rect.y) + 15, 14, status_col)
 
-		// ---- Draw ELO Slider ----
-        // 1. Draw the dark background track
         rl.draw_rectangle_rec(track_rect, rl.Color{50, 50, 50, 255})
 
-        // 2. Draw the filled accent portion (bottom up to handle)
         filled_height := (slider_y + slider_h) - handle_y
         filled_rect := rl.Rectangle{ slider_x, handle_y, slider_w, filled_height }
         rl.draw_rectangle_rec(filled_rect, rl.Color{200, 50, 50, 255})
 
-        // 3. Draw the grab handle
         rl.draw_rectangle_rec(handle_rect, rl.Color{220, 220, 220, 255})
 
-        // 4. Draw the ELO Text
         elo_str := if bot_elo >= max_elo { "ELO: MAX" } else { "ELO: $bot_elo" }
-        rl.draw_text(elo_str, int(slider_x) - 40, int(slider_y) - 30, 20, rl.Color{255, 255, 255, 255})
+        rl.draw_text(elo_str, int(slider_x) - 15, int(slider_y) - 30, 18, rl.Color{255, 255, 255, 255})
+
+        color_new_game := if rl.check_collision_point_rec(mouse_pos, btn_new_game) { rl.Color{90, 90, 90, 255} } else { rl.Color{60, 60, 60, 255} }
+        rl.draw_rectangle_rec(btn_new_game, color_new_game)
+        rl.draw_text("New Game", int(btn_new_game.x) + 14, int(btn_new_game.y) + 10, 14, rl.Color{255, 255, 255, 255})
+
+        color_undo := if rl.check_collision_point_rec(mouse_pos, btn_undo) { rl.Color{90, 90, 90, 255} } else { rl.Color{60, 60, 60, 255} }
+        rl.draw_rectangle_rec(btn_undo, color_undo)
+        rl.draw_text("Undo Move", int(btn_undo.x) + 14, int(btn_undo.y) + 10, 14, rl.Color{255, 255, 255, 255})
+
+        color_best_move := if show_best_move { rl.Color{180, 50, 50, 255} } else if rl.check_collision_point_rec(mouse_pos, btn_best_move) { rl.Color{90, 90, 90, 255} } else { rl.Color{60, 60, 60, 255} }
+        rl.draw_rectangle_rec(btn_best_move, color_best_move)
+        rl.draw_text("Best Move", int(btn_best_move.x) + 14, int(btn_best_move.y) + 10, 14, rl.Color{255, 255, 255, 255})
+
+        eval_bar_x := f32(board_pixels + 20)
+        eval_bar_y := f32(100)
+        eval_bar_w := f32(20)
+        eval_bar_h := f32(400)
+
+        rl.draw_rectangle(int(eval_bar_x), int(eval_bar_y), int(eval_bar_w), int(eval_bar_h), rl.Color{30, 30, 30, 255})
+
+        clamped_eval := if current_eval > 10.0 { 10.0 } else if current_eval < -10.0 { -10.0 } else { current_eval }
+        white_pct := (clamped_eval + 10.0) / 20.0
+        white_fill_h := eval_bar_h * white_pct
+        white_fill_y := eval_bar_y + (eval_bar_h - white_fill_h)
+
+        rl.draw_rectangle(int(eval_bar_x), int(white_fill_y), int(eval_bar_w), int(white_fill_h), rl.Color{220, 220, 220, 255})
+        rl.draw_text(current_eval.str(), int(eval_bar_x) - 5, int(eval_bar_y) - 25, 16, rl.Color{255, 255, 255, 255})
 
         if gs.promoting {
             draw_promotion_menu(gs, piece_textures)
@@ -1366,7 +1548,6 @@ fn main() {
 
         rl.end_texture_mode()
 
-        // ---- Stretch the canvas to the real window ----
         rl.begin_drawing()
         rl.clear_background(rl.Color{0, 0, 0, 255})
 
@@ -1376,7 +1557,6 @@ fn main() {
 
         rl.end_drawing()
 
-        // Fullscreen toggle
         if rl.is_key_pressed(int(rl.KeyboardKey.key_f)) {
             rl.toggle_fullscreen()
         }

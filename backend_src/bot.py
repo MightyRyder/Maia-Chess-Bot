@@ -210,8 +210,14 @@ def main():
                 )
                 best = max(move_probs, key=move_probs.get)
 
+                # Convert win probability to evaluation score (-10 to +10)
+                # win_prob 0.5 = 0.0 eval (equal)
+                # win_prob 0.9 = +9.0 eval (winning)
+                # win_prob 0.1 = -8.0 eval (losing)
+                eval_score = (win_prob - 0.5) * 20.0
+
                 with open(res, 'w') as f:
-                    f.write(f'BEST_MOVE {best}\n')
+                    f.write(f'BEST_MOVE {best}\nEVAL {eval_score:.2f}\n')
 
             except Exception as e:
                 with open(res, 'w') as f:
