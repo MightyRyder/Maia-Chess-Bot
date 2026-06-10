@@ -27,7 +27,7 @@ jobs:
             cc: gcc
             raylib_url: https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_win64_mingw-w64.zip
             raylib_dir: raylib-6.0_win64_mingw-w64
-            extra_cflags: -D_DEFAULT_SOURCE -DWIN32_LEAN_AND_MEAN
+            extra_cflags: -D_DEFAULT_SOURCE -DWIN32_LEAN_AND_MEAN -include windows.h
 
           - os: ubuntu-latest
             artifact: main_linux_x64
