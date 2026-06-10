@@ -162,13 +162,30 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
+      - name: Generate clean release notes
+        id: changelog
+        run: |
+          # 1. Generate the raw markdown notes via GitHub CLI
+          gh release generate-notes --tag "${{ github.event.pull_request.title }}" --target main > raw_notes.md
+          
+          # 2. Filter out the line containing the PR title/version itself
+          grep -v "${{ github.event.pull_request.title }}" raw_notes.md > clean_notes.md
+          
+          # 3. Stream the clean notes securely into a multiline step output
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          cat clean_notes.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
       - name: Create stable release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.pull_request.title }}
           name: ${{ github.event.pull_request.title }}
           prerelease: false
-          generate_release_notes: true
+          body: ${{ steps.changelog.outputs.body }}  # <-- Uses the filtered notes
           files: releases/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
