@@ -235,12 +235,12 @@ fn ensure_maia_installed() ! {
     install_dir := get_maia_install_dir()
     os.mkdir_all(install_dir)!
 
-    mut download_url := 'https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/backend-assets/'
+    mut download_url := 'https://github.com/MightyRyder/Maia-Chess-Bot/releases/download/backend-assets/'
     $if windows {
         download_url += 'maia_windows_x64.zip'
-    } $if linux {
+    } $else $if linux {
         download_url += 'maia_linux_x64.zip'
-    } $if macos {
+    } $else $if macos {
         download_url += 'maia_macos_arm64.zip'
     }
 
