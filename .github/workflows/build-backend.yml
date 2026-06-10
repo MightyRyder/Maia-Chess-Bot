@@ -77,7 +77,6 @@ jobs:
         with:
           pattern: '*-zip'
           merge-multiple: true
-
       - name: Push Assets to GitHub Release Tag
         uses: softprops/action-gh-release@v2
         with:

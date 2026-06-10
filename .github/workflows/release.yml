@@ -1,5 +1,4 @@
 name: Build and release
-
 on:
   push:
     branches:
@@ -25,7 +24,6 @@ jobs:
             raylib_url: https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_win64_mingw-w64.zip
             raylib_dir: raylib-6.0_win64_mingw-w64
             extra_cflags: -D_DEFAULT_SOURCE
-
           - os: ubuntu-latest
             artifact: main_linux_x64
             v_url: https://github.com/vlang/v/releases/latest/download/v_linux.zip
@@ -34,7 +32,6 @@ jobs:
             raylib_url: https://github.com/raysan5/raylib/releases/download/6.0/raylib-6.0_linux_amd64.tar.gz
             raylib_dir: raylib-6.0_linux_amd64
             extra_cflags: ''
-
           - os: macos-latest
             artifact: main_macos_arm64
             v_url: https://github.com/vlang/v/releases/latest/download/v_macos_arm64.zip
