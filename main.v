@@ -73,6 +73,12 @@ struct Move {
 struct BoardSnapshot {
     board         [64]int
     white_to_move bool
+    w_king_moved bool
+    w_rook_a_moved bool
+    w_rook_h_moved bool
+    b_king_moved bool
+    b_rook_a_moved bool
+    b_rook_h_moved bool
 }
 
 struct GameState {
@@ -340,25 +346,15 @@ fn (mut bot MaiaBot) get_eval_from_response() f32 {
 
 fn update_eval(gs &GameState, mut maia MaiaBot) f32 {
 	// Get evaluation from the maia bot response file
+	// Stockfish always returns eval from white's perspective
 	return maia.get_eval_from_response()
 }
 
 fn uci_to_squares(move_str string) (int, int) {
-	// Convert UCI notation like "g1f3" to array indices
-	// g1 = file 6, rank 1 = index 6*8 + 1 = 49
-	// f3 = file 5, rank 3 = index 5*8 + 3 = 43
-	if move_str.len < 4 {
-		return -1, -1
-	}
-	from_file := int(move_str[0] - `a`)
-	from_rank := int(move_str[1] - `1`)
-	to_file := int(move_str[2] - `a`)
-	to_rank := int(move_str[3] - `1`)
-	
-	from_sq := from_rank * 8 + from_file
-	to_sq := to_rank * 8 + to_file
-	
-	return from_sq, to_sq
+    if move_str.len < 4 { return -1, -1 }
+    from := uci_sq(move_str[0..2])
+    to   := uci_sq(move_str[2..4])
+    return from, to
 }
 
 fn board_to_fen(gs &GameState) string {
@@ -621,6 +617,12 @@ fn (mut gs GameState) save_snapshot() {
     snapshot := BoardSnapshot{
         board: gs.board
         white_to_move: gs.white_to_move
+        w_king_moved: gs.w_king_moved
+        w_rook_a_moved: gs.w_rook_a_moved
+        w_rook_h_moved: gs.w_rook_h_moved
+        b_king_moved: gs.b_king_moved
+        b_rook_a_moved: gs.b_rook_a_moved
+        b_rook_h_moved: gs.b_rook_h_moved
     }
     gs.history << snapshot
 }
@@ -628,6 +630,12 @@ fn (mut gs GameState) save_snapshot() {
 fn (mut gs GameState) load_snapshot(snapshot BoardSnapshot) {
     gs.board = snapshot.board
     gs.white_to_move = snapshot.white_to_move
+    gs.w_king_moved = snapshot.w_king_moved
+    gs.w_rook_a_moved = snapshot.w_rook_a_moved
+    gs.w_rook_h_moved = snapshot.w_rook_h_moved
+    gs.b_king_moved = snapshot.b_king_moved
+    gs.b_rook_a_moved = snapshot.b_rook_a_moved
+    gs.b_rook_h_moved = snapshot.b_rook_h_moved
 }
 
 fn (mut gs GameState) undo_move() {
@@ -659,12 +667,19 @@ fn draw_best_move_hint(from_sq int, to_sq int) {
     from_x, from_y := square_to_pixel(from_sq)
     to_x, to_y := square_to_pixel(to_sq)
 
+    // Highlight the two squares
     rl.draw_rectangle(from_x, from_y, square_size, square_size, rl.Color{0, 228, 48, 100})
     rl.draw_rectangle(to_x, to_y, square_size, square_size, rl.Color{0, 228, 48, 160})
 
-    start_v := rl.Vector2{f32(from_x + square_size / 2), f32(from_y + square_size / 2)}
-    end_v := rl.Vector2{f32(to_x + square_size / 2), f32(to_y + square_size / 2)}
-
+    // Arrow from centre of from‑square to centre of to‑square
+    start_v := rl.Vector2{
+        x: f32(from_x) + f32(square_size) * 0.5,
+        y: f32(from_y) + f32(square_size) * 0.5,
+    }
+    end_v := rl.Vector2{
+        x: f32(to_x) + f32(square_size) * 0.5,
+        y: f32(to_y) + f32(square_size) * 0.5,
+    }
     rl.draw_line_ex(start_v, end_v, 6.0, rl.Color{0, 228, 48, 225})
 }
 
@@ -1372,8 +1387,6 @@ fn main() {
         btn_undo := rl.Rectangle{ slider_x - 140, slider_y + 50, btn_w, btn_h }
         btn_best_move := rl.Rectangle{ slider_x - 140, slider_y + 100, btn_w, btn_h }
 
-        status_rect := rl.Rectangle{ slider_x - 270, slider_y, 110, 135 }
-
         if rl.is_mouse_button_pressed(0) {
             if rl.check_collision_point_rec(mouse_pos, btn_new_game) {
                 gs = new_game()
@@ -1460,8 +1473,8 @@ fn main() {
                 // Generate the standard FEN layout string from your GameState
                 fen_str := board_to_fen(gs)
                 
-                // Pass the FEN string, Elo value, and 0 (indicating White's perspective)
-                maia.send_move_request(fen_str, bot_elo, 0)
+                // Always use max ELO for best move
+                maia.send_move_request(fen_str, max_elo, 0)
                 hint_requested = true
             }
             if hint_requested {
@@ -1498,11 +1511,14 @@ fn main() {
 
         draw_scrolling_checkerboard(board_pixels, 0, panel_width, board_pixels, anim_offset, dark_mode)
 
-        rl.draw_rectangle_rec(status_rect, rl.Color{30, 30, 30, 255})
-        rl.draw_rectangle_lines_ex(status_rect, 1, rl.Color{60, 60, 60, 255})
-        
+        eval_bar_x := f32(board_pixels + 20)
+        eval_bar_y := f32(100)
+        eval_bar_w := f32(20)
+        eval_bar_h := f32(400)
+
+        // Draw status text at bottom of screen with eval bar alignment
         status_col := if gs.game_over || gs.in_check { status_bad_col } else { text_col }
-        rl.draw_text(gs.status, int(status_rect.x) + 10, int(status_rect.y) + 15, 14, status_col)
+        rl.draw_text(gs.status, int(eval_bar_x) - 5, int(window_h_ext) - 25, 14, status_col)
 
         rl.draw_rectangle_rec(track_rect, rl.Color{50, 50, 50, 255})
 
@@ -1526,11 +1542,6 @@ fn main() {
         color_best_move := if show_best_move { rl.Color{180, 50, 50, 255} } else if rl.check_collision_point_rec(mouse_pos, btn_best_move) { rl.Color{90, 90, 90, 255} } else { rl.Color{60, 60, 60, 255} }
         rl.draw_rectangle_rec(btn_best_move, color_best_move)
         rl.draw_text("Best Move", int(btn_best_move.x) + 14, int(btn_best_move.y) + 10, 14, rl.Color{255, 255, 255, 255})
-
-        eval_bar_x := f32(board_pixels + 20)
-        eval_bar_y := f32(100)
-        eval_bar_w := f32(20)
-        eval_bar_h := f32(400)
 
         rl.draw_rectangle(int(eval_bar_x), int(eval_bar_y), int(eval_bar_w), int(eval_bar_h), rl.Color{30, 30, 30, 255})
 
@@ -1561,6 +1572,13 @@ fn main() {
             rl.toggle_fullscreen()
         }
     }
+
+   // Clean up bot processes
+	$if windows {
+		os.execute('taskkill /f /im maia-bot.exe >nul 2>&1')
+	} $else {
+		os.execute('pkill -9 maia-bot')
+	}
 
     rl.close_window()
 }
