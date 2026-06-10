@@ -211,16 +211,16 @@ fn build_castling_flags(gs &GameState) string {
 // Resolves the standard OS user-data directory for the application data
 fn get_maia_install_dir() string {
 	base_data_dir := os.data_dir() // Universally handles AppData, .local/share, etc.
-	return os.join_path(base_data_dir, 'v_chess', 'maia_installation')
+	return os.join_path(base_data_dir, 'maia-chess-bot', 'backend-assets')
 }
 
 // Determines the binary executable filename depending on the platform
 fn get_maia_exe_path() string {
 	dir := get_maia_install_dir()
 	$if windows {
-		return os.join_path(dir, 'maia_backend.exe')
+		return os.join_path(dir, 'maia-bot.exe')
 	} $else {
-		return os.join_path(dir, 'maia_backend')
+		return os.join_path(dir, 'maia-bot')
 	}
 }
 

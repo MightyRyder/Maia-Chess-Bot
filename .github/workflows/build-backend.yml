@@ -14,15 +14,15 @@ jobs:
         include:
           - os: windows-latest
             platform: windows_x64
-            exe_name: maia_backend.exe
+            exe_name: maia-bot.exe
             zip_name: maia_windows_x64.zip
           - os: ubuntu-latest
             platform: linux_x64
-            exe_name: maia_backend
+            exe_name: maia-bot
             zip_name: maia_linux_x64.zip
           - os: macos-latest
             platform: macos_arm64
-            exe_name: maia_backend
+            exe_name: maia-bot
             zip_name: maia_macos_arm64.zip
     runs-on: ${{ matrix.os }}
     steps:
@@ -42,7 +42,7 @@ jobs:
       - name: Compile Python with PyInstaller
         run: |
           # Bundles bot.py and its frozen dependencies into a single binary
-          pyinstaller --onefile --name maia_backend backend_src/bot.py
+          pyinstaller --onefile --name maia-bot backend_src/bot.py
       - name: Stage Distribution Package
         run: |
           mkdir -p dist_package
