@@ -37,7 +37,6 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # Force PyTorch to pull the lightweight CPU-only wheels (saves ~2+ GB)
           pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
           pip install -r backend_src/requirements.txt
       - name: Compile Python with PyInstaller
@@ -47,10 +46,7 @@ jobs:
       - name: Stage Distribution Package
         run: |
           mkdir -p dist_package
-          # Move the fresh executable into the staging area
           mv dist/${{ matrix.exe_name }} dist_package/
-          # Copy the model weights directly into the folder alongside the binary
-          cp maia2_models/rapid_model.pt dist_package/
         shell: bash
       - name: Install zip (Windows)
         if: runner.os == 'Windows'
