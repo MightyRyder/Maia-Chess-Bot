@@ -4,7 +4,7 @@ on:
   push:
     paths:
       - 'backend_src/**'
-      - 'models/**'
+      - 'maia2_models/**'
       - '.github/workflows/build-backend.yml'
   workflow_dispatch:
 
@@ -57,7 +57,7 @@ jobs:
           # Move the fresh executable into the staging area
           mv dist/${{ matrix.exe_name }} dist_package/
           # Copy the model weights directly into the folder alongside the binary
-          cp models/rapid_model.pt dist_package/
+          cp maia2_models/rapid_model.pt dist_package/
         shell: bash
 
       - name: Compress Package Assets
