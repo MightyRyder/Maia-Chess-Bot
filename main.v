@@ -226,43 +226,43 @@ fn get_maia_exe_path() string {
 }
 
 // Runs a check at startup; downloads and unzips backend assets if they don't exist
+// Runs a check at startup; downloads and unzips backend assets if they don't exist
 fn ensure_maia_installed() ! {
-	exe_path := get_maia_exe_path()
-	if os.exists(exe_path) {
-		return // Asset already exists, bypass download
-	}
+    exe_path := get_maia_exe_path()
+    if os.exists(exe_path) {
+        return // Asset already exists, bypass download
+    }
 
-	println('Maia backend not found. Beginning automatic installation...')
-	install_dir := get_maia_install_dir()
-	os.mkdir_all(install_dir)?
+    println('Maia backend not found. Beginning automatic installation...')
+    install_dir := get_maia_install_dir()
+    os.mkdir_all(install_dir)! // Changed ? to !
 
-	// Dynamically build target release URL based on platform
-	// Swap out YOUR_USERNAME and YOUR_REPO with your actual GitHub project credentials
-	mut download_url := 'https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/backend-assets/'
-	$if windows {
-		download_url += 'maia_windows_x64.zip'
-	} $if linux {
-		download_url += 'maia_linux_x64.zip'
-	} $if macos {
-		download_url += 'maia_macos_arm64.zip'
-	}
+    // Dynamically build target release URL based on platform
+    mut download_url := 'https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/backend-assets/'
+    $if windows {
+        download_url += 'maia_windows_x64.zip'
+    } $if linux {
+        download_url += 'maia_linux_x64.zip'
+    } $if macos {
+        download_url += 'maia_macos_arm64.zip'
+    }
 
-	zip_path := os.join_path(install_dir, 'backend.zip')
-	
-	// Download binary payload
-	http.download_file(download_url, zip_path)?
+    zip_path := os.join_path(install_dir, 'backend.zip')
+    
+    // Download binary payload
+    http.download_file(download_url, zip_path)! // Changed ? to !
 
-	// Extract the archive cleanly utilizing native OS binaries
-	$if windows {
-		os.execute('powershell -Command "Expand-Archive -Path \'${zip_path}\' -DestinationPath \'${install_dir}\' -Force"')
-	} $else {
-		os.execute('unzip -q "${zip_path}" -d "${install_dir}"')
-		os.chmod(exe_path, 0o755)? // Set execution bits on UNIX systems
-	}
+    // Extract the archive cleanly utilizing native OS binaries
+    $if windows {
+        os.execute('powershell -Command "Expand-Archive -Path \'${zip_path}\' -DestinationPath \'${install_dir}\' -Force"')
+    } $else {
+        os.execute('unzip -q "${zip_path}" -d "${install_dir}"')
+        os.chmod(exe_path, 0o755)! // Changed ? to !
+    }
 
-	// Clean up zip cache
-	os.rm(zip_path)?
-	println('Maia backend successfully deployed to: $install_dir')
+    // Clean up zip cache
+    os.rm(zip_path)! // Changed ? to !
+    println('Maia backend successfully deployed to: $install_dir')
 }
 
 fn new_maia_bot() &MaiaBot {
