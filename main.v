@@ -1,5 +1,4 @@
 module main
-import net.http
 import rand
 import os
 import raylib as rl
@@ -226,18 +225,16 @@ fn get_maia_exe_path() string {
 }
 
 // Runs a check at startup; downloads and unzips backend assets if they don't exist
-// Runs a check at startup; downloads and unzips backend assets if they don't exist
 fn ensure_maia_installed() ! {
     exe_path := get_maia_exe_path()
     if os.exists(exe_path) {
-        return // Asset already exists, bypass download
+        return
     }
 
     println('Maia backend not found. Beginning automatic installation...')
     install_dir := get_maia_install_dir()
-    os.mkdir_all(install_dir)! // Changed ? to !
+    os.mkdir_all(install_dir)!
 
-    // Dynamically build target release URL based on platform
     mut download_url := 'https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/backend-assets/'
     $if windows {
         download_url += 'maia_windows_x64.zip'
@@ -248,20 +245,21 @@ fn ensure_maia_installed() ! {
     }
 
     zip_path := os.join_path(install_dir, 'backend.zip')
-    
-    // Download binary payload
-    http.download_file(download_url, zip_path)! // Changed ? to !
 
-    // Extract the archive cleanly utilizing native OS binaries
+    // Replace http.download_file with curl
+    result := os.execute('curl -fsSL -o "${zip_path}" "${download_url}"')
+    if result.exit_code != 0 {
+        return error('Download failed: ${result.output}')
+    }
+
     $if windows {
         os.execute('powershell -Command "Expand-Archive -Path \'${zip_path}\' -DestinationPath \'${install_dir}\' -Force"')
     } $else {
         os.execute('unzip -q "${zip_path}" -d "${install_dir}"')
-        os.chmod(exe_path, 0o755)! // Changed ? to !
+        os.chmod(exe_path, 0o755)!
     }
 
-    // Clean up zip cache
-    os.rm(zip_path)! // Changed ? to !
+    os.rm(zip_path)!
     println('Maia backend successfully deployed to: $install_dir')
 }
 

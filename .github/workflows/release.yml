@@ -66,10 +66,10 @@ jobs:
           echo "$V_BIN_DIR" >> $GITHUB_PATH
         shell: bash
 
-      - name: Install MinGW (Windows)
+      - name: Install MinGW + zip (Windows)
         if: runner.os == 'Windows'
         run: |
-          choco install mingw -y
+          choco install mingw zip unzip -y
           echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> $GITHUB_PATH
         shell: bash
 
@@ -121,8 +121,7 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: releases/${{ matrix.artifact }}
-
-  # Runs after every dev commit - overwrites the rolling dev release
+  
   release-dev:
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     needs: build
@@ -165,8 +164,11 @@ jobs:
       - name: Generate clean release notes
         id: changelog
         run: |
-          # 1. Generate the raw markdown notes via GitHub CLI
-          gh release generate-notes --tag "${{ github.event.pull_request.title }}" --target main > raw_notes.md
+          # 1. Hit the GitHub API endpoint to calculate the notes
+          gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="${{ github.event.pull_request.title }}" \
+            -f target_commitish="main" \
+            --jq .body > raw_notes.md
           
           # 2. Filter out the line containing the PR title/version itself
           grep -v "${{ github.event.pull_request.title }}" raw_notes.md > clean_notes.md
@@ -178,7 +180,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-
+      
       - name: Create stable release
         uses: softprops/action-gh-release@v2
         with:
