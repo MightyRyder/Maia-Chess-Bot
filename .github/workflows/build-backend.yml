@@ -59,7 +59,12 @@ jobs:
           # Copy the model weights directly into the folder alongside the binary
           cp maia2_models/rapid_model.pt dist_package/
         shell: bash
-
+        
+      - name: Install zip (Windows)
+        if: runner.os == 'Windows'
+        run: choco install zip -y
+        shell: bash
+        
       - name: Compress Package Assets
         run: |
           cd dist_package
