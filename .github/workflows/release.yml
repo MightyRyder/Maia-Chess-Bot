@@ -66,10 +66,10 @@ jobs:
           echo "$V_BIN_DIR" >> $GITHUB_PATH
         shell: bash
 
-      - name: Install MinGW + zip (Windows)
+      - name: Install MinGW (Windows)
         if: runner.os == 'Windows'
         run: |
-          choco install mingw zip unzip -y
+          choco install mingw -y
           echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> $GITHUB_PATH
         shell: bash
 
