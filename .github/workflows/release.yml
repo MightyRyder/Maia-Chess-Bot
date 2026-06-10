@@ -69,7 +69,7 @@ jobs:
       - name: Install MinGW (Windows)
         if: runner.os == 'Windows'
         run: |
-          choco install mingw -y
+          choco install mingw zip -y
           echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> $GITHUB_PATH
         shell: bash
 
