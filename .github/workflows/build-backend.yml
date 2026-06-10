@@ -84,12 +84,19 @@ jobs:
           pattern: '*-zip'
           merge-multiple: true
 
+      - name: Delete old backend-assets release
+        run: gh release delete backend-assets --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
       - name: Push Assets to GitHub Release Tag
         uses: softprops/action-gh-release@v2
         with:
           tag_name: backend-assets
           name: "Maia Backend Compiled Assets"
           prerelease: true
+          make_latest: false
           files: |
             maia_windows_x64.zip
             maia_linux_x64.zip

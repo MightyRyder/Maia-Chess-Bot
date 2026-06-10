@@ -134,12 +134,19 @@ jobs:
         with:
           path: releases/
 
-      - name: Overwrite rolling dev release
+      - name: Delete old pre-release tag
+        run: gh release delete pre-release --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+      - name: Create rolling dev release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: pre-release
           name: "Dev build (unstable)"
           prerelease: true
+          make_latest: false
           body: |
             ### Rolling Development Build
             **Commit:** `${{ github.sha }}`
