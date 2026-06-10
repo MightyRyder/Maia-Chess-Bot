@@ -1,6 +1,7 @@
 module main
-
+import net.http
 import rand
+import os
 import raylib as rl
 
 const b_bishop_bytes  = $embed_file('chess7/bB.png').to_bytes()
@@ -44,6 +45,23 @@ const panel_col = rl.Color{ r: 30, g: 30, b: 30, a: 230 }
 const panel_outline_col = rl.Color{ r: 90, g: 90, b: 90, a: 255 }
 const text_col = rl.Color{ r: 235, g: 235, b: 235, a: 255 }
 const status_bad_col = rl.Color{ r: 255, g: 120, b: 120, a: 255 }
+
+const panel_ratio = 16.0 / 9.0
+const panel_width = int(f32(board_pixels) * panel_ratio) - board_pixels   // ~498
+const window_w_ext = board_pixels + panel_width
+const window_h_ext = board_pixels
+
+const checker_size = 40
+const bg_scroll_speed = 20.0
+
+@[heap]
+struct MaiaBot {
+mut:
+	process      &os.Process = unsafe { nil }
+	ready        bool
+	thinking     bool
+	pending_move string
+}
 
 struct Move {
 	from int
@@ -125,6 +143,226 @@ fn load_piece_textures_embedded(emb map[string][]u8) map[string]rl.Texture2D {
 		}
 	}
 	return tex
+}
+
+fn system_prefers_dark_mode() bool {
+    // Windows: check registry
+    $if windows {
+        res := os.execute('reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize" /v AppsUseLightTheme')
+        if res.exit_code == 0 && res.output.contains('0x0') {
+            return true   // 0x0 = dark, 0x1 = light
+        }
+        return false
+    }
+    // Linux (GNOME)
+    $if linux {
+        res := os.execute('gsettings get org.gnome.desktop.interface color-scheme')
+        if res.exit_code == 0 && res.output.contains('prefer-dark') {
+            return true
+        }
+        return false
+    }
+    // macOS
+    $if macos {
+        res := os.execute('defaults read -g AppleInterfaceStyle')
+        if res.exit_code == 0 && res.output.trim_space() == 'Dark' {
+            return true
+        }
+        return false
+    }
+    return false   // fallback: light mode
+}
+
+fn uci_sq(uci string) int {
+    // "e2" → square index matching your board layout (0=a8, 63=h1)
+    if uci.len < 2 { return -1 }
+    f := int(uci[0]) - int(`a`)   // 'a'=0 … 'h'=7
+    r := int(uci[1]) - int(`1`)   // '1'=0 … '8'=7  (uci rank, 1-based)
+    row := 7 - r                   // rank 8 → row 0, rank 1 → row 7
+    return row * 8 + f
+}
+
+fn uci_to_move(uci string) Move {
+    // Handles normal moves ("e2e4") and promotions ("e7e8q")
+    if uci.len < 4 { return Move{} }
+    from := uci_sq(uci[0..2])
+    to   := uci_sq(uci[2..4])
+    mut promo := 0
+    if uci.len == 5 {
+        promo = match uci[4] {
+            `q` { piece_queen }
+            `r` { piece_rook }
+            `b` { piece_bishop }
+            `n` { piece_knight }
+            else { 0 }
+        }
+    }
+    return Move{ from: from, to: to, promo: promo }
+}
+
+fn build_castling_flags(gs &GameState) string {
+    return '${if gs.w_king_moved   { 1 } else { 0 }} ' +
+           '${if gs.w_rook_a_moved { 1 } else { 0 }} ' +
+           '${if gs.w_rook_h_moved { 1 } else { 0 }} ' +
+           '${if gs.b_king_moved   { 1 } else { 0 }} ' +
+           '${if gs.b_rook_a_moved { 1 } else { 0 }} ' +
+           '${if gs.b_rook_h_moved { 1 } else { 0 }}'
+}
+
+// Resolves the standard OS user-data directory for the application data
+fn get_maia_install_dir() string {
+	base_data_dir := os.data_dir() // Universally handles AppData, .local/share, etc.
+	return os.join_path(base_data_dir, 'v_chess', 'maia_installation')
+}
+
+// Determines the binary executable filename depending on the platform
+fn get_maia_exe_path() string {
+	dir := get_maia_install_dir()
+	$if windows {
+		return os.join_path(dir, 'maia_backend.exe')
+	} $else {
+		return os.join_path(dir, 'maia_backend')
+	}
+}
+
+// Runs a check at startup; downloads and unzips backend assets if they don't exist
+fn ensure_maia_installed() ! {
+	exe_path := get_maia_exe_path()
+	if os.exists(exe_path) {
+		return // Asset already exists, bypass download
+	}
+
+	println('Maia backend not found. Beginning automatic installation...')
+	install_dir := get_maia_install_dir()
+	os.mkdir_all(install_dir)?
+
+	// Dynamically build target release URL based on platform
+	// Swap out YOUR_USERNAME and YOUR_REPO with your actual GitHub project credentials
+	mut download_url := 'https://github.com/YOUR_USERNAME/YOUR_REPO/releases/download/backend-assets/'
+	$if windows {
+		download_url += 'maia_windows_x64.zip'
+	} $if linux {
+		download_url += 'maia_linux_x64.zip'
+	} $if macos {
+		download_url += 'maia_macos_arm64.zip'
+	}
+
+	zip_path := os.join_path(install_dir, 'backend.zip')
+	
+	// Download binary payload
+	http.download_file(download_url, zip_path)?
+
+	// Extract the archive cleanly utilizing native OS binaries
+	$if windows {
+		os.execute('powershell -Command "Expand-Archive -Path \'${zip_path}\' -DestinationPath \'${install_dir}\' -Force"')
+	} $else {
+		os.execute('unzip -q "${zip_path}" -d "${install_dir}"')
+		os.chmod(exe_path, 0o755)? // Set execution bits on UNIX systems
+	}
+
+	// Clean up zip cache
+	os.rm(zip_path)?
+	println('Maia backend successfully deployed to: $install_dir')
+}
+
+fn new_maia_bot() &MaiaBot {
+	// First, verify everything is downloaded and extracted
+	ensure_maia_installed() or {
+		eprintln('ERROR: Failed to verify or install maia backend: $err')
+		return &MaiaBot{ process: unsafe { nil }, ready: false }
+	}
+
+	exe_path := get_maia_exe_path()
+	install_dir := get_maia_install_dir()
+
+	// Launch the compiled standalone binary directly
+	mut p := os.new_process(exe_path)
+	p.work_folder = install_dir // Keeps file context confined to installation path
+
+	p.run()
+
+	if p.pid == 0 {
+		eprintln('ERROR: failed to launch maia bot (PID 0)')
+		return &MaiaBot{ process: unsafe { nil }, ready: false }
+	}
+
+	println('maia backend pid: ${p.pid}')
+	return &MaiaBot{ process: p, ready: false }
+}
+
+fn (mut bot MaiaBot) send_move_request(fen string, elo_self int, elo_oppo int) {
+	install_dir := get_maia_install_dir()
+	req := os.join_path(install_dir, 'maia_req.txt')
+	res := os.join_path(install_dir, 'maia_res.txt')
+	
+	os.rm(res) or {}
+	os.write_file(req, '${fen}|${elo_self}|${elo_oppo}') or {}
+}
+
+fn (mut bot MaiaBot) check_move_response() string {
+	install_dir := get_maia_install_dir()
+	res := os.join_path(install_dir, 'maia_res.txt')
+	
+	if !os.exists(res) {
+		return ''
+	}
+	line := os.read_file(res) or { return '' }
+	os.rm(res) or {}
+	if line.starts_with('BEST_MOVE ') {
+		return line['BEST_MOVE '.len..].trim_space()
+	}
+	return ''
+}
+
+fn board_to_fen(gs &GameState) string {
+	abs_to_char := fn(code int) u8 {
+		return match piece_abs(code) {
+			piece_pawn   { `p` }
+			piece_knight { `n` }
+			piece_bishop { `b` }
+			piece_rook   { `r` }
+			piece_queen  { `q` }
+			piece_king   { `k` }
+			else         { `?` }
+		}
+	}
+
+	mut rows := []string{}
+	for rank in 0..8 {
+		mut empty := 0
+		mut row := ''
+		for file in 0..8 {
+			code := gs.board[rank * 8 + file]
+			if code == 0 {
+				empty++
+			} else {
+				if empty > 0 { row += empty.str(); empty = 0 }
+				ch := abs_to_char(code)
+				row += if code > 0 { ch.ascii_str().to_upper() } else { ch.ascii_str() }
+			}
+		}
+		if empty > 0 { row += empty.str() }
+		rows << row
+	}
+
+	side := if gs.white_to_move { 'w' } else { 'b' }
+
+	mut castling := ''
+	if !gs.w_king_moved && !gs.w_rook_h_moved { castling += 'K' }
+	if !gs.w_king_moved && !gs.w_rook_a_moved { castling += 'Q' }
+	if !gs.b_king_moved && !gs.b_rook_h_moved { castling += 'k' }
+	if !gs.b_king_moved && !gs.b_rook_a_moved { castling += 'q' }
+	if castling == '' { castling = '-' }
+
+	ep := if gs.en_passant_sq >= 0 {
+		files := ['a','b','c','d','e','f','g','h']
+		rank := 8 - gs.en_passant_sq / 8
+		'${files[gs.en_passant_sq % 8]}${rank}'
+	} else {
+		'-'
+	}
+
+	return '${rows.join('/')} ${side} ${castling} ${ep} 0 1'
 }
 
 fn abs_int(n int) int {
@@ -802,8 +1040,8 @@ fn draw_last_move(gs &GameState) {
 fn draw_promotion_menu(gs &GameState, textures map[string]rl.Texture2D) {
 	panel_w := square_size * 4
 	panel_h := square_size + 48
-	panel_x := (window_w - panel_w) / 2
-	panel_y := (window_h - panel_h) / 2
+	panel_x := (window_w_ext - panel_w) / 2
+	panel_y := (window_h_ext - panel_h) / 2
 
 	rl.draw_rectangle(panel_x - 3, panel_y - 3, panel_w + 6, panel_h + 6, panel_outline_col)
 	rl.draw_rectangle(panel_x, panel_y, panel_w, panel_h, panel_col)
@@ -842,18 +1080,36 @@ fn draw_promotion_menu(gs &GameState, textures map[string]rl.Texture2D) {
 	}
 }
 
-fn draw_status_bar(gs &GameState) {
-	rl.draw_rectangle(0, board_pixels - 28, board_pixels, 28, rl.Color{ r: 20, g: 20, b: 20, a: 190 })
-	col := if gs.game_over || gs.in_check { status_bad_col } else { text_col }
-	rl.draw_text(gs.status, 8, board_pixels - 22, 18, col)
-}
-
 fn draw_hover(gs &GameState) {
 	if gs.mouse_sq >= 0 {
 		draw_square_overlay(gs.mouse_sq, hover_col)
 	}
 }
 
+fn draw_scrolling_checkerboard(x int, y int, w int, h int, offset f64, dark_mode bool) {
+    tile1 := if dark_mode { rl.Color{60, 60, 60, 255} } else { rl.Color{255, 255, 255, 255} }
+    tile2 := if dark_mode { rl.Color{30, 30, 30, 255} } else { rl.Color{220, 220, 220, 255} }
+
+    rl.begin_scissor_mode(x, y, w, h)
+
+    // Calculate a smooth pixel shift that wraps around every checker_size (40)
+    shift := int(offset) % checker_size
+
+    // Start drawing one tile early (-shift) to cover the gap as the board slides
+    for j := y - shift; j < y + h + checker_size; j += checker_size {
+        for i := x - shift; i < x + w + checker_size; i += checker_size {
+            
+            // Calculate the logical grid row/col to alternate colors
+            col := (i - x + shift) / checker_size
+            row := (j - y + shift) / checker_size
+
+            color := if (row + col) % 2 == 0 { tile1 } else { tile2 }
+            rl.draw_rectangle(i, j, checker_size, checker_size, color)
+        }
+    }
+    
+    rl.end_scissor_mode()
+}
 fn find_move_candidates(gs &GameState, from_sq int, to_sq int, white bool) []Move {
 	mut out := []Move{}
 	for mv in gs.legal_moves_from(from_sq, white) {
@@ -892,17 +1148,50 @@ fn (mut gs GameState) try_player_release(to_sq int) {
 	gs.finalize_move(candidates[0])
 }
 
-fn (mut gs GameState) try_black_move() {
-	if gs.game_over || gs.promoting || gs.white_to_move {
+fn (mut gs GameState) try_black_move(mut bot MaiaBot, bot_elo int) {
+	if gs.game_over || gs.promoting || gs.white_to_move || bot.thinking { return }
+	if !bot.ready {
+		install_dir := get_maia_install_dir()
+		ready_path := os.join_path(install_dir, 'maia_ready.txt')
+		if os.exists(ready_path) {
+			bot.ready = true
+		} else {
+			return
+		}
+	}
+	bot.thinking = true
+	fen := board_to_fen(gs)
+	bot.send_move_request(fen, bot_elo, bot_elo)
+}
+
+fn (mut gs GameState) apply_pending_move(mut bot MaiaBot) {
+	if !bot.thinking || gs.game_over || gs.promoting || gs.white_to_move {
 		return
 	}
-	moves := gs.all_legal_moves(false)
-	if moves.len == 0 {
-		gs.refresh_status()
+	best_uci := bot.check_move_response()
+	if best_uci == '' {
 		return
 	}
-	idx := rand.intn(moves.len) or { 0 }
-	gs.finalize_move(moves[idx])
+	bot.thinking = false
+
+	hint := uci_to_move(best_uci)
+	legal := gs.all_legal_moves(false)
+	mut found := false
+	for mv in legal {
+		if mv.from == hint.from && mv.to == hint.to {
+			if hint.promo == 0 || mv.promo == hint.promo {
+				gs.finalize_move(mv)
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		eprintln('maia: ${best_uci} not legal, falling back to random')
+		moves := gs.all_legal_moves(false)
+		if moves.len == 0 { gs.refresh_status(); return }
+		gs.finalize_move(moves[rand.intn(moves.len) or { 0 }])
+	}
 }
 
 fn (mut gs GameState) handle_promotion_click(mouse_x int, mouse_y int) {
@@ -911,8 +1200,8 @@ fn (mut gs GameState) handle_promotion_click(mouse_x int, mouse_y int) {
 	}
 	panel_w := square_size * 4
 	panel_h := square_size + 48
-	panel_x := (window_w - panel_w) / 2
-	panel_y := (window_h - panel_h) / 2 + 26
+	panel_x := (window_w_ext - panel_w) / 2
+	panel_y := (window_h_ext - panel_h) / 2 + 26
 
 	if mouse_y < panel_y || mouse_y >= panel_y + square_size {
 		return
@@ -927,68 +1216,173 @@ fn (mut gs GameState) handle_promotion_click(mouse_x int, mouse_y int) {
 }
 
 fn main() {
-	rl.init_window(window_w, window_h, 'Maia Chess Stardance Project')
-	rl.set_target_fps(fps)
+	mut bot_elo := 200
+    min_elo := 200
+    max_elo := 2600
+    mut is_dragging_elo := false
+    mut anim_offset := f64(0.0)
+    dark_mode := system_prefers_dark_mode()
 
-	mut gs := new_game()
+    rl.set_config_flags(.flag_window_resizable | .flag_vsync_hint)
+    rl.init_window(window_w_ext, window_h_ext, 'Maia Chess Stardance Project')
+    rl.set_target_fps(fps)
 
-	embedded_map := get_embedded_map()
-	mut piece_textures := load_piece_textures_embedded(embedded_map)
-	defer {
-		for _, tex in piece_textures {
-			rl.unload_texture(tex)
-		}
+    // Render texture so fullscreen stretches the 16:9 scene
+    render_tex := rl.load_render_texture(window_w_ext, window_h_ext)
+    defer { rl.unload_render_texture(render_tex) }
+
+    mut gs := new_game()
+    mut maia := new_maia_bot()
+
+    embedded_map := get_embedded_map()
+    mut piece_textures := load_piece_textures_embedded(embedded_map)
+    defer {
+        for _, tex in piece_textures {
+            rl.unload_texture(tex)
+        }
 	}
 
-	for !rl.window_should_close() {
-		mouse_x := rl.get_mouse_x()
-		mouse_y := rl.get_mouse_y()
-		gs.mouse_sq = pixel_to_square(mouse_x, mouse_y)
+    for !rl.window_should_close() {
+        dt := rl.get_frame_time()
+        anim_offset += bg_scroll_speed * f64(dt)
+        
+        // Grab the physical screen dimensions (moved up here so the mouse can use them)
+        sw := f32(rl.get_screen_width())
+        sh := f32(rl.get_screen_height())
 
-		// Input
-		if gs.promoting {
-			if rl.is_mouse_button_pressed(0) {
-				gs.handle_promotion_click(mouse_x, mouse_y)
-			}
-		} else if !gs.game_over {
-			if gs.white_to_move {
-				if rl.is_mouse_button_pressed(0) {
-					sq := pixel_to_square(mouse_x, mouse_y)
-					if sq >= 0 && gs.board[sq] > 0 {
-						gs.selected_sq = sq
-						gs.selected_moves = gs.legal_moves_from(sq, true)
-						gs.drag_active = true
-					}
-				}
-				if rl.is_mouse_button_released(0) && gs.drag_active {
-					end_sq := pixel_to_square(mouse_x, mouse_y)
-					gs.try_player_release(end_sq)
-					gs.drag_active = false
-				}
-			}
-		}
+        // Get the raw physical mouse coordinates
+        raw_mouse_x := f32(rl.get_mouse_x())
+        raw_mouse_y := f32(rl.get_mouse_y())
 
-		// Black AI move, immediately after White finishes a turn
-		if !gs.white_to_move && !gs.promoting && !gs.game_over {
-			gs.try_black_move()
-		}
+        // Map the physical coordinates back to your virtual resolution
+        mouse_x := int((raw_mouse_x / sw) * f32(window_w_ext))
+        mouse_y := int((raw_mouse_y / sh) * f32(window_h_ext))
 
-		rl.begin_drawing()
-		rl.clear_background(rl.Color{ r: 20, g: 20, b: 20, a: 255 })
+        gs.mouse_sq = pixel_to_square(mouse_x, mouse_y)
 
-		draw_board()
-		draw_last_move(gs)
-		draw_hover(gs)
-		draw_selection_hints(gs)
-		draw_pieces(gs, piece_textures)
-		draw_coords()
-		if gs.promoting {
-			draw_promotion_menu(gs, piece_textures)
-		}
-		draw_status_bar(gs)
+        if gs.promoting {
+            if rl.is_mouse_button_pressed(0) {
+                gs.handle_promotion_click(mouse_x, mouse_y)
+            }
+        } else if !gs.game_over {
+            if gs.white_to_move {
+                if rl.is_mouse_button_pressed(0) {
+                    sq := pixel_to_square(mouse_x, mouse_y)
+                    if sq >= 0 && gs.board[sq] > 0 {
+                        gs.selected_sq = sq
+                        gs.selected_moves = gs.legal_moves_from(sq, true)
+                        gs.drag_active = true
+                    }
+                }
+                if rl.is_mouse_button_released(0) && gs.drag_active {
+                    end_sq := pixel_to_square(mouse_x, mouse_y)
+                    gs.try_player_release(end_sq)
+                    gs.drag_active = false
+                }
+            }
+        }
 
-		rl.end_drawing()
-	}
+		// ---- Slider Dimensions (Adjust X based on your window_w_ext to push it right) ----
+        slider_x := f32(window_w_ext - 120) 
+        slider_y := f32(100)
+        slider_w := f32(20)
+        slider_h := f32(400) // Height of the slider track
 
-	rl.close_window()
+        // Calculate the handle's Y position based on current ELO
+        elo_percent := f32(bot_elo - min_elo) / f32(max_elo - min_elo)
+        handle_y := slider_y + slider_h - (elo_percent * slider_h)
+        
+        // Hitboxes
+        handle_rect := rl.Rectangle{ slider_x - 10, handle_y - 10, slider_w + 20, 20 }
+        track_rect := rl.Rectangle{ slider_x, slider_y, slider_w, slider_h }
+
+        // ---- Slider Input Logic ----
+        if rl.is_mouse_button_pressed(0) {
+            // Check if clicking the handle or anywhere on the track
+            if rl.check_collision_point_rec(rl.Vector2{f32(mouse_x), f32(mouse_y)}, handle_rect) ||
+               rl.check_collision_point_rec(rl.Vector2{f32(mouse_x), f32(mouse_y)}, track_rect) {
+                is_dragging_elo = true
+            }
+        }
+
+        if rl.is_mouse_button_released(0) {
+            is_dragging_elo = false
+        }
+
+        if is_dragging_elo {
+            // Clamp mouse to the physical track bounds so it doesn't break
+            mut clamped_y := f32(mouse_y)
+            if clamped_y < slider_y { clamped_y = slider_y }
+            if clamped_y > slider_y + slider_h { clamped_y = slider_y + slider_h }
+
+            // Convert visual position back to an ELO number
+            new_percent := 1.0 - ((clamped_y - slider_y) / slider_h)
+            bot_elo = min_elo + int(new_percent * f32(max_elo - min_elo))
+        }
+
+        if !gs.white_to_move && !gs.promoting && !gs.game_over {
+            gs.try_black_move(mut maia, bot_elo)
+        }
+        if !gs.white_to_move && !gs.promoting && !gs.game_over {
+            gs.apply_pending_move(mut maia)
+        }
+
+        // ---- Draw to render texture (virtual 16:9 canvas) ----
+        rl.begin_texture_mode(render_tex)
+        rl.clear_background(rl.Color{20, 20, 20, 255})
+
+        draw_board()
+        draw_last_move(gs)
+        draw_hover(gs)
+        draw_selection_hints(gs)
+        draw_pieces(gs, piece_textures)
+        draw_coords()
+
+        // Scrolling checkerboard (clipped to the panel)
+        draw_scrolling_checkerboard(board_pixels, 0, panel_width, board_pixels, anim_offset, dark_mode)
+
+        // Status bar
+        rl.draw_rectangle(0, board_pixels - 28, window_w_ext, 28, rl.Color{20, 20, 20, 190})
+        col := if gs.game_over || gs.in_check { status_bad_col } else { text_col }
+        rl.draw_text(gs.status, 8, board_pixels - 22, 18, col)
+
+		// ---- Draw ELO Slider ----
+        // 1. Draw the dark background track
+        rl.draw_rectangle_rec(track_rect, rl.Color{50, 50, 50, 255})
+
+        // 2. Draw the filled accent portion (bottom up to handle)
+        filled_height := (slider_y + slider_h) - handle_y
+        filled_rect := rl.Rectangle{ slider_x, handle_y, slider_w, filled_height }
+        rl.draw_rectangle_rec(filled_rect, rl.Color{200, 50, 50, 255})
+
+        // 3. Draw the grab handle
+        rl.draw_rectangle_rec(handle_rect, rl.Color{220, 220, 220, 255})
+
+        // 4. Draw the ELO Text
+        elo_str := if bot_elo >= max_elo { "ELO: MAX" } else { "ELO: $bot_elo" }
+        rl.draw_text(elo_str, int(slider_x) - 40, int(slider_y) - 30, 20, rl.Color{255, 255, 255, 255})
+
+        if gs.promoting {
+            draw_promotion_menu(gs, piece_textures)
+        }
+
+        rl.end_texture_mode()
+
+        // ---- Stretch the canvas to the real window ----
+        rl.begin_drawing()
+        rl.clear_background(rl.Color{0, 0, 0, 255})
+
+        src := rl.Rectangle{0, 0, f32(window_w_ext), -f32(window_h_ext)}
+        dest := rl.Rectangle{0, 0, sw, sh}
+        rl.draw_texture_pro(render_tex.texture, src, dest, rl.Vector2{}, 0, rl.Color{255, 255, 255, 255})
+
+        rl.end_drawing()
+
+        // Fullscreen toggle
+        if rl.is_key_pressed(int(rl.KeyboardKey.key_f)) {
+            rl.toggle_fullscreen()
+        }
+    }
+
+    rl.close_window()
 }
