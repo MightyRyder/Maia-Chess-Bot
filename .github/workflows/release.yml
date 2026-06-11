@@ -147,26 +147,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-      - name: Generate clean release notes
-        id: changelog
-        run: |
-          gh api "repos/${{ github.repository }}/releases/generate-notes" \
-            -f tag_name="${{ github.event.pull_request.title }}" \
-            -f target_commitish="main" \
-            --jq .body > raw_notes.md
-          grep -v "${{ github.event.pull_request.title }}" raw_notes.md > clean_notes.md
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          cat clean_notes.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
       - name: Create stable release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.pull_request.title }}
           name: ${{ github.event.pull_request.title }}
           prerelease: false
+          generate_release_notes: true
           body: ${{ steps.changelog.outputs.body }}
           files: releases/*
         env:
