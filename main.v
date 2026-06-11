@@ -1328,8 +1328,8 @@ fn (mut gs GameState) handle_promotion_click(mouse_x int, mouse_y int) {
 }
 
 fn main() {
-    mut bot_elo := 200
-    min_elo := 200
+    mut bot_elo := 1000
+    min_elo := 600
     max_elo := 2600
     mut is_dragging_elo := false
     mut anim_offset := f64(0.0)
