@@ -42,7 +42,7 @@ jobs:
       - name: Compile Python with PyInstaller
         run: |
           # Bundles bot.py and its frozen dependencies into a single binary
-          pyinstaller --onefile --name maia-bot --hidden-import=backports backend_src/bot.py
+          pyinstaller --onefile --name maia-bot --collect-submodules=setuptools --hidden-import=backports backend_src/bot.py
       - name: Stage Distribution Package
         run: |
           mkdir -p dist_package
